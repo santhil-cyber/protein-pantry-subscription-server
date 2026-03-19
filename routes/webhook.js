@@ -25,7 +25,9 @@ const {
   markWebhookProcessed,
   recordDebit,
   updateDebitStatus,
+  getSubscriptionByTxnId,
 } = require('../db/database');
+const { createShopifyOrder } = require('../utils/shopify-api');
 
 /**
  * Resolves the correct merchant key and salt based on environment.
@@ -190,6 +192,33 @@ function handlePresentmentUpdate(data, merchantKey, merchantSalt, res) {
     });
 
     console.log(`[Webhook] Debit SUCCESS for ${txnId}: ₹${data.amount}`);
+
+    // ── Auto-create Shopify Order (async, non-blocking) ──
+    const subscription = getSubscriptionByTxnId(txnId);
+    if (subscription) {
+      createShopifyOrder({
+        customerName: subscription.customer_name,
+        customerEmail: subscription.customer_email,
+        customerPhone: subscription.customer_phone,
+        productTitle: subscription.product_title,
+        variantId: subscription.product_variant_id,
+        amount: data.amount || subscription.amount,
+        transactionId: txnId,
+        frequency: subscription.frequency,
+      })
+      .then(result => {
+        if (result.success) {
+          console.log(`[Webhook] Shopify order created: #${result.orderNumber} for ${txnId}`);
+        } else {
+          console.error(`[Webhook] Shopify order FAILED for ${txnId}:`, result.error);
+        }
+      })
+      .catch(err => {
+        console.error(`[Webhook] Shopify order error for ${txnId}:`, err.message);
+      });
+    } else {
+      console.warn(`[Webhook] No subscription record found for ${txnId}, skipping Shopify order`);
+    }
   } else {
     // Failed debit — Easebuzz will auto-retry up to 3 times per NPCI guidelines
     console.warn(`[Webhook] Debit FAILED for ${txnId}: ₹${data.amount}`);
