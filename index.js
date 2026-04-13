@@ -1,18 +1,17 @@
 /**
  * Protein Pantry — Subscription Server
  * ──────────────────────────────────────
- * Express.js backend for Easebuzz UPI AutoPay integration.
+ * Express.js backend for Cashfree UPI AutoPay Subscription integration.
  *
  * Endpoints:
- *   POST /api/subscription/create     — Create new subscription (returns checkout URL)
- *   GET  /api/subscription/status/:id — Check subscription status
+ *   POST /api/subscription/create         — Create new subscription (returns checkout URL)
+ *   GET  /api/subscription/status/:id     — Check subscription status
  *   GET  /api/subscription/customer/:email — Get customer's subscriptions
- *   POST /api/subscription/cancel/:id — Cancel a subscription
- *   POST /api/webhook/easebuzz        — Easebuzz webhook receiver
- *   POST /api/presentment/notify      — Send pre-debit notification
- *   POST /api/presentment/execute     — Execute manual debit
- *   GET  /api/presentment/active      — List active subscriptions
- *   GET  /health                      — Health check
+ *   POST /api/subscription/cancel/:id     — Cancel a subscription
+ *   POST /api/webhook/cashfree            — Cashfree webhook receiver
+ *   GET  /api/payments/active             — List active subscriptions
+ *   GET  /api/payments/status/:id         — Get live status from Cashfree
+ *   GET  /health                          — Health check
  */
 
 require('dotenv').config();
@@ -52,7 +51,7 @@ app.use(cors({
 }));
 
 // ── Body Parsing ──
-// JSON for API calls, URL-encoded for Easebuzz form callbacks
+// JSON for API calls and Cashfree webhooks
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
@@ -69,23 +68,25 @@ initDatabase();
 // ── Routes ──
 app.use('/api/subscription', require('./routes/subscription'));
 app.use('/api/webhook', require('./routes/webhook'));
-app.use('/api/presentment', require('./routes/presentment'));
+app.use('/api/payments', require('./routes/presentment'));
 
 // ── Health Check ──
 app.get('/health', (req, res) => {
-  const env = process.env.EASEBUZZ_ENV || 'test';
+  const env = process.env.CASHFREE_ENV || 'test';
   res.status(200).json({
     status: 'ok',
     environment: env,
     timestamp: new Date().toISOString(),
-    version: '1.0.0',
+    version: '2.0.0',
+    gateway: 'cashfree',
   });
 });
 
-// ── Success/Failure redirect pages (temporary) ──
+// ── Success/Failure redirect pages ──
 // These catch the redirect after mandate authorization and show a simple message.
 // Replace with Shopify pages once they're created.
 app.get('/api/subscription/success', (req, res) => {
+  const subId = req.query.sub_id || '';
   res.send(`
     <!DOCTYPE html>
     <html>
@@ -108,6 +109,7 @@ app.get('/api/subscription/success', (req, res) => {
         .icon { font-size: 64px; margin-bottom: 20px; }
         h1 { color: #28a745; font-size: 24px; margin-bottom: 10px; }
         p { color: #6c757d; line-height: 1.6; }
+        .sub-id { font-size: 12px; color: #adb5bd; margin-top: 8px; }
         a {
           display: inline-block;
           margin-top: 20px;
@@ -126,6 +128,7 @@ app.get('/api/subscription/success', (req, res) => {
         <div class="icon">✅</div>
         <h1>Subscription Activated!</h1>
         <p>Your UPI AutoPay mandate has been authorized. You'll receive automatic deliveries as scheduled.</p>
+        ${subId ? `<p class="sub-id">Subscription ID: ${subId}</p>` : ''}
         <a href="${process.env.SHOPIFY_STORE_URL || 'https://proteinpantry.in'}">Continue Shopping</a>
       </div>
     </body>
@@ -194,10 +197,11 @@ app.use((err, req, res, next) => {
 
 // ── Start Server ──
 app.listen(PORT, () => {
-  const env = process.env.EASEBUZZ_ENV || 'test';
+  const env = process.env.CASHFREE_ENV || 'test';
   console.log('');
   console.log('╔═══════════════════════════════════════════════════╗');
-  console.log('║  Protein Pantry Subscription Server               ║');
+  console.log('║  Protein Pantry Subscription Server v2.0          ║');
+  console.log(`║  Gateway: Cashfree Payments                       ║`);
   console.log(`║  Environment: ${env.padEnd(38)}║`);
   console.log(`║  Port: ${String(PORT).padEnd(44)}║`);
   console.log(`║  Time: ${new Date().toISOString().padEnd(44)}║`);
