@@ -65,7 +65,7 @@ function generateSubscriptionId() {
  * Generate a unique plan ID based on product + frequency.
  * Plans are reusable — we create one per product+frequency combination.
  */
-function generatePlanId(productHandle, intervalType, intervals) {
+function generatePlanId(productHandle, intervalType, intervals, amount) {
   // Sanitize product handle for use in plan ID
   const cleanHandle = (productHandle || 'general')
     .toLowerCase()
@@ -82,7 +82,9 @@ function generatePlanId(productHandle, intervalType, intervals) {
   const key = `${intervalType}_${intervals}`;
   const suffix = freqSuffix[key] || `${intervals}${intervalType.toLowerCase()}`;
 
-  return `PP-${cleanHandle}-${suffix}`;
+  // Include amount in plan ID to avoid conflicts when price changes
+  const amtStr = amount ? `-${Math.round(amount)}` : '';
+  return `PP-${cleanHandle}-${suffix}${amtStr}`;
 }
 
 /**

@@ -86,7 +86,7 @@ router.post('/create', async (req, res) => {
     const freq = mapFrequency(frequency);
 
     // ── Step 1: Create or reuse a Cashfree Plan ──
-    const planId = generatePlanId(productHandle, freq.intervalType, freq.intervals);
+    const planId = generatePlanId(productHandle, freq.intervalType, freq.intervals, amount);
 
     const planResult = await createPlan({
       planId,
