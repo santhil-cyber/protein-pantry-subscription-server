@@ -284,6 +284,10 @@ async function createSubscription(params) {
     );
 
     const data = response.data;
+    
+    // DEBUG: Log the full raw response to see exact field values
+    console.log(`[Cashfree] RAW subscription response:`, JSON.stringify(data, null, 2));
+    
     const sessionId = data.subscription_session_id;
 
     // Construct the checkout URL for UPI mandate authorization
