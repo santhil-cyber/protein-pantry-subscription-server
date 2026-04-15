@@ -136,7 +136,7 @@ async function createPlan(params) {
     plan_currency: 'INR',
     plan_recurring_amount: params.amount,
     plan_max_amount: params.maxAmount || params.amount,
-    plan_max_cycles: params.maxCycles || 52, // ~1 year of weekly
+    plan_max_cycles: params.maxCycles || 520, // ~10 years of weekly
     plan_intervals: params.intervals,
     plan_interval_type: params.intervalType,
     plan_note: (params.planNote || 'Protein Pantry Subscribe and Save').replace(/[^a-zA-Z0-9 _.-]/g, ''),
@@ -236,9 +236,9 @@ async function createSubscription(params) {
   firstCharge.setDate(firstCharge.getDate() + 5); // T+5 for safety margin
   const firstChargeISO = params.firstChargeTime || firstCharge.toISOString();
 
-  // Expiry: 1 year from now by default
+  // Expiry: 10 years from now by default
   const expiry = new Date(now);
-  expiry.setFullYear(expiry.getFullYear() + 1);
+  expiry.setFullYear(expiry.getFullYear() + 10);
   const expiryISO = params.expiryTime || expiry.toISOString();
 
   // Session expiry: 30 min from now
