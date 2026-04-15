@@ -156,12 +156,14 @@ router.post('/create', async (req, res) => {
 
     console.log(`[Subscription] Created: ${subscriptionId} for ${customerEmail} — ₹${amount}/${frequency}`);
 
-    // ── Return checkout URL ──
+    // ── Return checkout data ──
+    const cashfreeEnv = (process.env.CASHFREE_ENV || 'test') === 'production' ? 'production' : 'sandbox';
     return res.status(200).json({
       success: true,
       subscriptionId,
       checkoutUrl: subResult.checkoutUrl,
       sessionId: subResult.sessionId,
+      cashfreeEnv,
     });
   } catch (error) {
     console.error('[Subscription] Create error:', error);
