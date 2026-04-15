@@ -35,7 +35,9 @@ const allowedOrigins = [
   'http://localhost:5000',
   'https://proteinpantry.in',
   'https://www.proteinpantry.in',
-];
+  'https://0nb9nh-8p.myshopify.com',
+  process.env.SHOPIFY_STORE_DOMAIN ? `https://${process.env.SHOPIFY_STORE_DOMAIN}` : '',
+].filter(Boolean);
 
 app.use(cors({
   origin: function (origin, callback) {
