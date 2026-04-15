@@ -69,9 +69,20 @@ function generatePlanId(productHandle, intervalType, intervals) {
   // Sanitize product handle for use in plan ID
   const cleanHandle = (productHandle || 'general')
     .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, '-')
+    .replace(/[^a-z0-9]/g, '')
     .substring(0, 20);
-  return `PP-${cleanHandle}-${intervals}${intervalType.charAt(0)}`;
+
+  // Use full words — Cashfree sandbox crashes on IDs like "1W" or "2M"
+  const freqSuffix = {
+    'WEEK_1': 'weekly',
+    'WEEK_2': '2weekly',
+    'WEEK_3': '3weekly',
+    'MONTH_1': 'monthly',
+  };
+  const key = `${intervalType}_${intervals}`;
+  const suffix = freqSuffix[key] || `${intervals}${intervalType.toLowerCase()}`;
+
+  return `PP-${cleanHandle}-${suffix}`;
 }
 
 /**
