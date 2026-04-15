@@ -113,6 +113,9 @@ function mapFrequency(frequency) {
 async function createPlan(params) {
   const config = getConfig();
 
+  // Debug: log which credentials are being used (masked)
+  console.log(`[Cashfree] Using appId: ${config.appId.substring(0, 8)}..., env: ${config.env}, baseUrl: ${config.baseUrl}`);
+
   const payload = {
     plan_id: params.planId,
     plan_name: params.planName,
@@ -123,31 +126,46 @@ async function createPlan(params) {
     plan_max_cycles: params.maxCycles || 52, // ~1 year of weekly
     plan_intervals: params.intervals,
     plan_interval_type: params.intervalType,
-    plan_note: params.planNote || 'Protein Pantry Subscribe & Save',
+    plan_note: (params.planNote || 'Protein Pantry Subscribe and Save').replace(/[^a-zA-Z0-9 _.-]/g, ''),
   };
 
-  try {
-    const response = await axios.post(
-      `${config.baseUrl}/plans`,
-      payload,
-      { headers: getHeaders(), timeout: 30000 }
-    );
+  // Retry up to 2 times on internal server errors
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await axios.post(
+        `${config.baseUrl}/plans`,
+        payload,
+        { headers: getHeaders(), timeout: 30000 }
+      );
 
-    console.log(`[Cashfree] Plan created: ${params.planId}`);
-    return { success: true, data: response.data };
-  } catch (error) {
-    // Plan already exists is fine (409 Conflict)
-    if (error.response?.status === 409) {
-      console.log(`[Cashfree] Plan already exists: ${params.planId}`);
-      return { success: true, data: { plan_id: params.planId }, alreadyExists: true };
+      console.log(`[Cashfree] Plan created: ${params.planId}`);
+      return { success: true, data: response.data };
+    } catch (error) {
+      // Plan already exists is fine (409 Conflict)
+      if (error.response?.status === 409) {
+        console.log(`[Cashfree] Plan already exists: ${params.planId}`);
+        return { success: true, data: { plan_id: params.planId }, alreadyExists: true };
+      }
+
+      // Retry on 500 internal server error
+      if (error.response?.status === 500 && attempt < 2) {
+        console.warn(`[Cashfree] Plan creation got 500, retrying (attempt ${attempt + 1})...`);
+        await new Promise(r => setTimeout(r, 2000)); // Wait 2s before retry
+        continue;
+      }
+
+      console.error('[Cashfree] Plan creation failed:', {
+        status: error.response?.status,
+        data: error.response?.data,
+        message: error.message,
+        headers: error.response?.headers,
+      });
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message,
+        details: error.response?.data,
+      };
     }
-
-    console.error('[Cashfree] Plan creation failed:', error.response?.data || error.message);
-    return {
-      success: false,
-      error: error.response?.data?.message || error.message,
-      details: error.response?.data,
-    };
   }
 }
 
