@@ -193,14 +193,6 @@ async function createShopifyOrder(params) {
       send_fulfillment_receipt: true,
       // Phone
       phone: params.customerPhone ? `+91${params.customerPhone}` : undefined,
-      // Billing address (minimal)
-      billing_address: {
-        first_name: firstName,
-        last_name: lastName,
-        phone: params.customerPhone ? `+91${params.customerPhone}` : '',
-        country: 'India',
-        country_code: 'IN',
-      },
       // Source name for tracking
       source_name: 'subscription-server',
       // Transactions — record the UPI payment
@@ -214,6 +206,34 @@ async function createShopifyOrder(params) {
       ],
     },
   };
+
+  // Add shipping + billing address
+  const addr = params.shippingAddress || {};
+  if (addr.address1) {
+    const fullAddress = {
+      first_name: addr.firstName || firstName,
+      last_name: addr.lastName || lastName,
+      address1: addr.address1 || '',
+      address2: addr.address2 || '',
+      city: addr.city || '',
+      province: addr.province || '',
+      zip: addr.zip || '',
+      country: addr.country || 'India',
+      country_code: addr.countryCode || 'IN',
+      phone: params.customerPhone ? `+91${params.customerPhone}` : (addr.phone || ''),
+    };
+    orderPayload.order.shipping_address = fullAddress;
+    orderPayload.order.billing_address = fullAddress;
+  } else {
+    // Minimal fallback
+    orderPayload.order.billing_address = {
+      first_name: firstName,
+      last_name: lastName,
+      phone: params.customerPhone ? `+91${params.customerPhone}` : '',
+      country: 'India',
+      country_code: 'IN',
+    };
+  }
 
   // Add line item: prefer variant_id, fallback to custom line item
   if (params.variantId && params.variantId !== '') {
@@ -274,8 +294,83 @@ async function createShopifyOrder(params) {
   }
 }
 
+// ──────────────────────────────────────
+// Customer Address Lookup
+// ──────────────────────────────────────
+
+/**
+ * Looks up a customer's default shipping address from Shopify by email.
+ * Returns the address if found, or null if customer not found / no address.
+ *
+ * @param {string} email – Customer email
+ * @returns {Promise<object|null>} – Address object or null
+ */
+async function lookupCustomerAddress(email) {
+  let accessToken;
+  try {
+    accessToken = await getAccessToken();
+  } catch (err) {
+    console.error('[Shopify] Auth error in address lookup:', err.message);
+    return null;
+  }
+
+  const config = getShopifyConfig();
+
+  try {
+    // Search for customer by email
+    const searchUrl = `https://${config.storeDomain}/admin/api/${config.apiVersion}/customers/search.json?query=email:${encodeURIComponent(email)}&fields=id,first_name,last_name,email,phone,default_address`;
+
+    const response = await axios.get(searchUrl, {
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
+    });
+
+    const customers = response.data?.customers || [];
+    if (customers.length === 0) {
+      console.log(`[Shopify] No customer found for email: ${email}`);
+      return null;
+    }
+
+    // Use the first matching customer's default address
+    const customer = customers[0];
+    const addr = customer.default_address;
+
+    if (!addr) {
+      console.log(`[Shopify] Customer found but no default address: ${email}`);
+      return null;
+    }
+
+    console.log(`[Shopify] Address found for ${email}: ${addr.city}, ${addr.province}`);
+
+    return {
+      firstName: addr.first_name || customer.first_name || '',
+      lastName: addr.last_name || customer.last_name || '',
+      address1: addr.address1 || '',
+      address2: addr.address2 || '',
+      city: addr.city || '',
+      province: addr.province || '',
+      zip: addr.zip || '',
+      country: addr.country || 'India',
+      countryCode: addr.country_code || 'IN',
+      phone: addr.phone || customer.phone || '',
+    };
+  } catch (error) {
+    if (error.response?.status === 401 && cachedToken.accessToken) {
+      console.warn('[Shopify] Token rejected (401) in address lookup, retrying...');
+      cachedToken = { accessToken: null, expiresAt: 0, scopes: null };
+      return lookupCustomerAddress(email);
+    }
+    console.error('[Shopify] Address lookup failed:', error.response?.data || error.message);
+    return null;
+  }
+}
+
 module.exports = {
   createShopifyOrder,
+  lookupCustomerAddress,
   getShopifyConfig,
   getAccessToken,
   fetchAccessToken,

@@ -176,6 +176,7 @@ function handlePaymentUpdate(data, res) {
         amount: paymentData.payment_amount || subscription.amount,
         transactionId: subscriptionId,
         frequency: subscription.frequency,
+        shippingAddress: subscription.shipping_address ? JSON.parse(subscription.shipping_address) : null,
       })
       .then(result => {
         if (result.success) {

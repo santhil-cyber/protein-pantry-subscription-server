@@ -28,6 +28,7 @@ const {
   getSubscriptionsByEmail,
   updateSubscriptionStatus,
 } = require('../db/database');
+const { lookupCustomerAddress } = require('../utils/shopify-api');
 
 /**
  * POST /api/subscription/create
@@ -47,11 +48,33 @@ const {
  *   - productVariantId (string, optional)
  *   - productHandle (string, optional, used for plan ID generation)
  */
+/**
+ * GET /api/subscription/address-lookup/:email
+ * ─────────────────────────────────────────────
+ * Looks up a customer's default shipping address from Shopify.
+ * Returns the address if found, or null for new customers.
+ */
+router.get('/address-lookup/:email', async (req, res) => {
+  try {
+    const { email } = req.params;
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ success: false, error: 'Valid email is required' });
+    }
+
+    const address = await lookupCustomerAddress(email.toLowerCase());
+    return res.status(200).json({ success: true, address });
+  } catch (error) {
+    console.error('[Subscription] Address lookup error:', error);
+    return res.status(200).json({ success: true, address: null });
+  }
+});
+
 router.post('/create', async (req, res) => {
   try {
     const {
       customerName, customerEmail, customerPhone,
       amount, frequency, productTitle, productVariantId, productHandle,
+      shippingAddress,
     } = req.body;
 
     // ── Input Validation ──
@@ -152,6 +175,7 @@ router.post('/create', async (req, res) => {
       startDate: today.toISOString().split('T')[0],
       endDate: endDate.toISOString().split('T')[0],
       firstChargeDate: firstCharge.toISOString().split('T')[0],
+      shippingAddress: shippingAddress ? JSON.stringify(shippingAddress) : null,
     });
 
     console.log(`[Subscription] Created: ${subscriptionId} for ${customerEmail} — ₹${amount}/${frequency}`);

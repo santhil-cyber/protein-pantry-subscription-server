@@ -79,6 +79,9 @@ function initDatabase() {
   if (!columns.includes('next_schedule_date')) {
     db.exec(`ALTER TABLE subscriptions ADD COLUMN next_schedule_date TEXT;`);
   }
+  if (!columns.includes('shipping_address')) {
+    db.exec(`ALTER TABLE subscriptions ADD COLUMN shipping_address TEXT;`);
+  }
 
   // --- Webhook Events table ---
   // Ensures idempotency: each webhook event is processed only once
@@ -130,12 +133,12 @@ function createSubscription(data) {
       subscription_id, cf_subscription_id, customer_name, customer_email,
       customer_phone, product_title, product_variant_id, amount, frequency,
       plan_id, plan_interval_type, plan_intervals, status, session_id,
-      checkout_url, start_date, end_date, first_charge_date
+      checkout_url, start_date, end_date, first_charge_date, shipping_address
     ) VALUES (
       @subscriptionId, @cfSubscriptionId, @customerName, @customerEmail,
       @customerPhone, @productTitle, @productVariantId, @amount, @frequency,
       @planId, @planIntervalType, @planIntervals, 'INITIALIZED', @sessionId,
-      @checkoutUrl, @startDate, @endDate, @firstChargeDate
+      @checkoutUrl, @startDate, @endDate, @firstChargeDate, @shippingAddress
     )
   `);
 
