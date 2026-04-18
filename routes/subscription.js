@@ -49,19 +49,19 @@ const { lookupCustomerAddress } = require('../utils/shopify-api');
  *   - productHandle (string, optional, used for plan ID generation)
  */
 /**
- * GET /api/subscription/address-lookup/:email
+ * GET /api/subscription/address-lookup/:phone
  * ─────────────────────────────────────────────
- * Looks up a customer's default shipping address from Shopify.
+ * Looks up a customer's default shipping address from Shopify by phone number.
  * Returns the address if found, or null for new customers.
  */
-router.get('/address-lookup/:email', async (req, res) => {
+router.get('/address-lookup/:phone', async (req, res) => {
   try {
-    const { email } = req.params;
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return res.status(400).json({ success: false, error: 'Valid email is required' });
+    const { phone } = req.params;
+    if (!phone || !/^[6-9]\d{9}$/.test(phone)) {
+      return res.status(400).json({ success: false, error: 'Valid 10-digit phone is required' });
     }
 
-    const address = await lookupCustomerAddress(email.toLowerCase());
+    const address = await lookupCustomerAddress(phone);
     return res.status(200).json({ success: true, address });
   } catch (error) {
     console.error('[Subscription] Address lookup error:', error);

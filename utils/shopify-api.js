@@ -299,13 +299,13 @@ async function createShopifyOrder(params) {
 // ──────────────────────────────────────
 
 /**
- * Looks up a customer's default shipping address from Shopify by email.
+ * Looks up a customer's default shipping address from Shopify by phone number.
  * Returns the address if found, or null if customer not found / no address.
  *
- * @param {string} email – Customer email
+ * @param {string} phone – Customer phone (10 digits, without country code)
  * @returns {Promise<object|null>} – Address object or null
  */
-async function lookupCustomerAddress(email) {
+async function lookupCustomerAddress(phone) {
   let accessToken;
   try {
     accessToken = await getAccessToken();
@@ -317,8 +317,9 @@ async function lookupCustomerAddress(email) {
   const config = getShopifyConfig();
 
   try {
-    // Search for customer by email
-    const searchUrl = `https://${config.storeDomain}/admin/api/${config.apiVersion}/customers/search.json?query=email:${encodeURIComponent(email)}&fields=id,first_name,last_name,email,phone,default_address`;
+    // Search for customer by phone — try with +91 prefix
+    const phoneWithCode = phone.startsWith('+91') ? phone : `+91${phone}`;
+    const searchUrl = `https://${config.storeDomain}/admin/api/${config.apiVersion}/customers/search.json?query=phone:${encodeURIComponent(phoneWithCode)}&fields=id,first_name,last_name,email,phone,default_address`;
 
     const response = await axios.get(searchUrl, {
       headers: {
@@ -330,20 +331,19 @@ async function lookupCustomerAddress(email) {
 
     const customers = response.data?.customers || [];
     if (customers.length === 0) {
-      console.log(`[Shopify] No customer found for email: ${email}`);
+      console.log(`[Shopify] No customer found for phone: ${phoneWithCode}`);
       return null;
     }
 
-    // Use the first matching customer's default address
     const customer = customers[0];
     const addr = customer.default_address;
 
     if (!addr) {
-      console.log(`[Shopify] Customer found but no default address: ${email}`);
+      console.log(`[Shopify] Customer found but no default address for phone: ${phoneWithCode}`);
       return null;
     }
 
-    console.log(`[Shopify] Address found for ${email}: ${addr.city}, ${addr.province}`);
+    console.log(`[Shopify] Address found for ${phoneWithCode}: ${addr.city}, ${addr.province}`);
 
     return {
       firstName: addr.first_name || customer.first_name || '',
@@ -361,7 +361,7 @@ async function lookupCustomerAddress(email) {
     if (error.response?.status === 401 && cachedToken.accessToken) {
       console.warn('[Shopify] Token rejected (401) in address lookup, retrying...');
       cachedToken = { accessToken: null, expiresAt: 0, scopes: null };
-      return lookupCustomerAddress(email);
+      return lookupCustomerAddress(phone);
     }
     console.error('[Shopify] Address lookup failed:', error.response?.data || error.message);
     return null;
