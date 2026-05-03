@@ -1,22 +1,26 @@
 /**
- * Subscription API Routes — Easebuzz UPI AutoPay
+ * Subscription API Routes — Cashfree Integration
  * -------------------------------------------------
  * Handles subscription creation, status checks, and cancellation.
- * Uses Easebuzz Auto-Collect (UPI 2.0) for mandate-based recurring payments.
  *
  * Flow:
  *   1. Frontend calls POST /create with customer + product + frequency
- *   2. Server calls Easebuzz generateAccessKey → returns checkout URL
- *   3. Customer authorizes UPI mandate on Easebuzz checkout page
- *   4. Easebuzz webhook fires → updateSubscriptionStatus
+ *   2. Server creates a Cashfree Plan (if not exists) + Subscription
+ *   3. Returns checkout URL for UPI Autopay mandate authorization
+ *   4. Customer authorizes on Cashfree checkout → webhooks update status
  */
 
 const express = require('express');
 const router = express.Router();
 const {
-  generateAccessKey,
-  generateTransactionId,
-} = require('../utils/easebuzz-api');
+  createPlan,
+  createSubscription: createCashfreeSubscription,
+  fetchSubscription: fetchCashfreeSubscription,
+  manageSubscription,
+  generateSubscriptionId,
+  generatePlanId,
+  mapFrequency,
+} = require('../utils/cashfree-api');
 const {
   createSubscription,
   getSubscriptionById,
@@ -24,21 +28,6 @@ const {
   updateSubscriptionStatus,
 } = require('../db/database');
 const { lookupCustomerAddress } = require('../utils/shopify-api');
-
-/**
- * Maps frontend frequency strings to Easebuzz frequency values.
- * Easebuzz supports: daily, weekly, fortnightly, monthly, bimonthly,
- *                    quarterly, halfyearly, yearly, as_presented
- */
-function mapFrequencyToEasebuzz(frequency) {
-  const map = {
-    '1_week':  { freq: 'weekly',       label: 'Every Week' },
-    '2_week':  { freq: 'fortnightly',  label: 'Every 2 Weeks' },
-    '3_week':  { freq: 'as_presented', label: 'Every 3 Weeks' },
-    'monthly': { freq: 'monthly',      label: 'Monthly' },
-  };
-  return map[frequency] || map['monthly'];
-}
 
 /**
  * GET /api/subscription/address-lookup/:phone
@@ -71,7 +60,7 @@ router.post('/create', async (req, res) => {
       shippingAddress,
     } = req.body;
 
-    // ── Validation ──
+    // ── Input Validation ──
     if (!customerName || typeof customerName !== 'string' || customerName.trim().length < 2) {
       return res.status(400).json({ success: false, error: 'Valid customer name is required (min 2 characters)' });
     }
@@ -82,7 +71,10 @@ router.post('/create', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Valid 10-digit Indian phone number is required' });
     }
     if (!amount || typeof amount !== 'number' || amount < 1 || amount > 15000) {
-      return res.status(400).json({ success: false, error: 'Amount must be between ₹1 and ₹15,000' });
+      return res.status(400).json({
+        success: false,
+        error: 'Amount must be between ₹1 and ₹15,000 (UPI AutoPay limit)',
+      });
     }
 
     const validFrequencies = ['1_week', '2_week', '3_week', 'monthly'];
@@ -93,67 +85,85 @@ router.post('/create', async (req, res) => {
       });
     }
 
-    // ── Map frequency ──
-    const freqMap = mapFrequencyToEasebuzz(frequency);
+    // ── Map frequency to Cashfree plan parameters ──
+    const freq = mapFrequency(frequency);
 
-    // ── Generate Easebuzz Access Key (mandate checkout URL) ──
-    const transactionId = generateTransactionId();
+    // ── Step 1: Create or reuse a Cashfree Plan ──
+    const planId = generatePlanId(productHandle, freq.intervalType, freq.intervals, amount);
 
-    const accessKeyResult = await generateAccessKey({
+    const planResult = await createPlan({
+      planId,
+      planName: `${(productTitle || 'Protein Pantry').replace(/[^a-zA-Z0-9 _-]/g, '')} - ${freq.label}`,
+      amount,
+      maxAmount: amount,
+      intervalType: freq.intervalType,
+      intervals: freq.intervals,
+      maxCycles: freq.intervalType === 'MONTH' ? 12 : 52,
+      planNote: `Subscribe & Save: ${freq.label} delivery`,
+    });
+
+    if (!planResult.success) {
+      console.error('[Subscription] Plan creation failed:', planResult.error);
+      return res.status(502).json({ success: false, error: 'Failed to create subscription plan' });
+    }
+
+    // ── Step 2: Create Cashfree Subscription ──
+    const subscriptionId = generateSubscriptionId();
+
+    const subResult = await createCashfreeSubscription({
+      subscriptionId,
+      planId,
       customerName: customerName.trim(),
       customerEmail: customerEmail.trim().toLowerCase(),
       customerPhone: customerPhone.trim(),
       amount,
-      frequency: freqMap.freq,
-      productInfo: (productTitle || 'Protein Pantry Subscription').replace(/[^a-zA-Z0-9 _-]/g, '').substring(0, 100),
-      transactionId,
+      maxAmount: amount,
+      intervalType: freq.intervalType,
+      intervals: freq.intervals,
+      productTitle: productTitle || 'Protein Pantry Subscription',
+      productVariantId: productVariantId || '',
     });
 
-    if (!accessKeyResult.success) {
-      console.error('[Subscription] Easebuzz access key failed:', accessKeyResult.error);
+    if (!subResult.success) {
+      console.error('[Subscription] Cashfree subscription creation failed:', subResult.error);
       return res.status(502).json({ success: false, error: 'Payment gateway error. Please try again.' });
     }
 
-    // ── Save to local database ──
+    // ── Step 3: Save to local database ──
     const today = new Date();
     const endDate = new Date(today);
     endDate.setFullYear(endDate.getFullYear() + 1);
     const firstCharge = new Date(today);
     firstCharge.setDate(firstCharge.getDate() + 5);
 
-    try {
-      createSubscription({
-        subscriptionId: transactionId,
-        cfSubscriptionId: accessKeyResult.accessKey || '',
-        customerName: customerName.trim(),
-        customerEmail: customerEmail.trim().toLowerCase(),
-        customerPhone: customerPhone.trim(),
-        productTitle: productTitle || '',
-        productVariantId: productVariantId || '',
-        amount,
-        frequency,
-        planId: freqMap.freq,
-        planIntervalType: freqMap.freq,
-        planIntervals: 1,
-        sessionId: accessKeyResult.accessKey || '',
-        checkoutUrl: accessKeyResult.checkoutUrl || '',
-        startDate: today.toISOString().split('T')[0],
-        endDate: endDate.toISOString().split('T')[0],
-        firstChargeDate: firstCharge.toISOString().split('T')[0],
-        shippingAddress: shippingAddress ? JSON.stringify(shippingAddress) : null,
-      });
-    } catch (dbErr) {
-      // Don't fail the request if DB save fails — the checkout URL is the important part
-      console.warn('[Subscription] DB save warning:', dbErr.message);
-    }
+    createSubscription({
+      subscriptionId,
+      cfSubscriptionId: subResult.cfSubscriptionId || '',
+      customerName: customerName.trim(),
+      customerEmail: customerEmail.trim().toLowerCase(),
+      customerPhone: customerPhone.trim(),
+      productTitle: productTitle || '',
+      productVariantId: productVariantId || '',
+      amount,
+      frequency,
+      planId,
+      planIntervalType: freq.intervalType,
+      planIntervals: freq.intervals,
+      sessionId: subResult.sessionId || '',
+      checkoutUrl: subResult.checkoutUrl || '',
+      startDate: today.toISOString().split('T')[0],
+      endDate: endDate.toISOString().split('T')[0],
+      firstChargeDate: firstCharge.toISOString().split('T')[0],
+      shippingAddress: shippingAddress ? JSON.stringify(shippingAddress) : null,
+    });
 
-    console.log(`[Subscription] Created: ${transactionId} for ${customerEmail} — ₹${amount}/${frequency}`);
+    console.log(`[Subscription] Created: ${subscriptionId} for ${customerEmail} — ₹${amount}/${frequency}`);
 
     return res.status(200).json({
       success: true,
-      subscriptionId: transactionId,
-      checkoutUrl: accessKeyResult.checkoutUrl,
-      accessKey: accessKeyResult.accessKey,
+      subscriptionId,
+      checkoutUrl: subResult.checkoutUrl,
+      sessionId: subResult.sessionId,
     });
   } catch (error) {
     console.error('[Subscription] Create error:', error);
@@ -164,12 +174,25 @@ router.post('/create', async (req, res) => {
 /**
  * GET /api/subscription/status/:subId
  */
-router.get('/status/:subId', (req, res) => {
+router.get('/status/:subId', async (req, res) => {
   try {
     const { subId } = req.params;
     if (!subId) return res.status(400).json({ success: false, error: 'Subscription ID is required' });
+
     const subscription = getSubscriptionById(subId);
     if (!subscription) return res.status(404).json({ success: false, error: 'Subscription not found' });
+
+    if (['INITIALIZED', 'BANK_APPROVAL_PENDING', 'ACTIVE'].includes(subscription.status)) {
+      try {
+        const liveStatus = await fetchCashfreeSubscription(subId);
+        if (liveStatus.success && liveStatus.data) {
+          return res.status(200).json({ success: true, subscription, liveStatus: liveStatus.data });
+        }
+      } catch (e) {
+        console.warn('[Subscription] Live status fetch failed, using local data');
+      }
+    }
+
     return res.status(200).json({ success: true, subscription });
   } catch (error) {
     console.error('[Subscription] Status error:', error);
@@ -197,16 +220,27 @@ router.get('/customer/:email', (req, res) => {
 /**
  * POST /api/subscription/cancel/:subId
  */
-router.post('/cancel/:subId', (req, res) => {
+router.post('/cancel/:subId', async (req, res) => {
   try {
     const { subId } = req.params;
     const subscription = getSubscriptionById(subId);
     if (!subscription) return res.status(404).json({ success: false, error: 'Subscription not found' });
+
     if (['CANCELLED', 'COMPLETED'].includes(subscription.status)) {
       return res.status(400).json({ success: false, error: `Subscription is already ${subscription.status}` });
     }
-    updateSubscriptionStatus(subId, 'CANCELLED');
-    return res.status(200).json({ success: true, message: 'Subscription cancelled successfully' });
+
+    const result = await manageSubscription(subId, 'CANCEL');
+    if (result.success) {
+      updateSubscriptionStatus(subId, 'CANCELLED');
+      return res.status(200).json({ success: true, message: 'Subscription cancelled successfully' });
+    }
+
+    updateSubscriptionStatus(subId, 'CANCEL_REQUESTED');
+    return res.status(200).json({
+      success: true,
+      message: 'Cancellation request submitted. May take a few minutes to process.',
+    });
   } catch (error) {
     console.error('[Subscription] Cancel error:', error);
     return res.status(500).json({ success: false, error: 'Internal server error' });
