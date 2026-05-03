@@ -93,7 +93,7 @@ router.post('/create', async (req, res) => {
 
     const planResult = await createPlan({
       planId,
-      planName: `${(productTitle || 'Protein Pantry').replace(/[^a-zA-Z0-9 _-]/g, '')} - ${freq.label}`,
+      planName: `${(productTitle || 'Protein Pantry').replace(/[^a-zA-Z0-9 _-]/g, '')} - ${freq.label}`.substring(0, 40),
       amount,
       maxAmount: amount,
       intervalType: freq.intervalType,
