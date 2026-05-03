@@ -95,9 +95,10 @@ function generatePlanId(productHandle, intervalType, intervals, amount) {
  */
 function mapFrequency(frequency) {
   const frequencyMap = {
-    '1_week': { intervalType: 'WEEK', intervals: 1, label: 'Every Week' },
-    '2_week': { intervalType: 'WEEK', intervals: 2, label: 'Every 2 Weeks' },
-    '3_week': { intervalType: 'WEEK', intervals: 3, label: 'Every 3 Weeks' },
+    'daily':   { intervalType: 'DAY',  intervals: 1, label: 'Daily (Test)' },
+    '1_week':  { intervalType: 'WEEK', intervals: 1, label: 'Every Week' },
+    '2_week':  { intervalType: 'WEEK', intervals: 2, label: 'Every 2 Weeks' },
+    '3_week':  { intervalType: 'WEEK', intervals: 3, label: 'Every 3 Weeks' },
     'monthly': { intervalType: 'MONTH', intervals: 1, label: 'Monthly' },
   };
 

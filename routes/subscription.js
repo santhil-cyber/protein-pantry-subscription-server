@@ -77,7 +77,7 @@ router.post('/create', async (req, res) => {
       });
     }
 
-    const validFrequencies = ['1_week', '2_week', '3_week', 'monthly'];
+    const validFrequencies = ['daily', '1_week', '2_week', '3_week', 'monthly'];
     if (!frequency || !validFrequencies.includes(frequency)) {
       return res.status(400).json({
         success: false,
