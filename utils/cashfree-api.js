@@ -160,18 +160,32 @@ async function createPlan(params) {
         return { success: true, data: { plan_id: params.planId }, alreadyExists: true };
       }
 
-      // Retry on 500 internal server error
-      if (error.response?.status === 500 && attempt < 2) {
-        console.warn(`[Cashfree] Plan creation got 500, retrying (attempt ${attempt + 1})...`);
-        await new Promise(r => setTimeout(r, 2000)); // Wait 2s before retry
-        continue;
+      // On 500, Cashfree sometimes returns this when the plan already exists.
+      // Try fetching the plan to confirm before treating as failure.
+      if (error.response?.status === 500) {
+        console.warn(`[Cashfree] Plan creation got 500 — checking if plan already exists: ${params.planId}`);
+        try {
+          const existingPlan = await fetchPlan(params.planId);
+          if (existingPlan.success) {
+            console.log(`[Cashfree] Plan already exists (confirmed via fetch): ${params.planId}`);
+            return { success: true, data: existingPlan.data, alreadyExists: true };
+          }
+        } catch (fetchErr) {
+          console.warn(`[Cashfree] Plan fetch also failed:`, fetchErr.message);
+        }
+
+        // If still on attempt 1, wait and retry once more
+        if (attempt < 2) {
+          console.warn(`[Cashfree] Retrying plan creation (attempt ${attempt + 1})...`);
+          await new Promise(r => setTimeout(r, 2000));
+          continue;
+        }
       }
 
       console.error('[Cashfree] Plan creation failed:', {
         status: error.response?.status,
         data: error.response?.data,
         message: error.message,
-        headers: error.response?.headers,
       });
       return {
         success: false,
