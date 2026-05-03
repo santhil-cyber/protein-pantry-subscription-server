@@ -36,7 +36,7 @@ let cachedToken = {
  */
 function getShopifyConfig() {
   return {
-    storeDomain: process.env.SHOPIFY_STORE_DOMAIN || 'proteinpantry.myshopify.com',
+    storeDomain: process.env.SHOPIFY_STORE_DOMAIN || '0nb9nh-8p.myshopify.com',
     clientId: process.env.SHOPIFY_CLIENT_ID || '',
     clientSecret: process.env.SHOPIFY_CLIENT_SECRET || '',
     // Legacy: static admin token (fallback if client credentials not configured)
