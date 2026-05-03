@@ -74,6 +74,7 @@ function generatePlanId(productHandle, intervalType, intervals, amount) {
 
   // Use full words — Cashfree sandbox crashes on IDs like "1W" or "2M"
   const freqSuffix = {
+    'DAY_2': '2daily',
     'WEEK_1': 'weekly',
     'WEEK_2': '2weekly',
     'WEEK_3': '3weekly',
@@ -95,10 +96,10 @@ function generatePlanId(productHandle, intervalType, intervals, amount) {
  */
 function mapFrequency(frequency) {
   const frequencyMap = {
-    'daily':   { intervalType: 'DAY',  intervals: 1, label: 'Daily (Test)' },
-    '1_week':  { intervalType: 'WEEK', intervals: 1, label: 'Every Week' },
-    '2_week':  { intervalType: 'WEEK', intervals: 2, label: 'Every 2 Weeks' },
-    '3_week':  { intervalType: 'WEEK', intervals: 3, label: 'Every 3 Weeks' },
+    '2_day':  { intervalType: 'DAY',  intervals: 2, label: 'Every 2 Days' },
+    '1_week': { intervalType: 'WEEK', intervals: 1, label: 'Every Week' },
+    '2_week': { intervalType: 'WEEK', intervals: 2, label: 'Every 2 Weeks' },
+    '3_week': { intervalType: 'WEEK', intervals: 3, label: 'Every 3 Weeks' },
     'monthly': { intervalType: 'MONTH', intervals: 1, label: 'Monthly' },
   };
 
