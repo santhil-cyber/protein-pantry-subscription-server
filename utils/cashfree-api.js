@@ -246,10 +246,13 @@ async function fetchPlan(planId) {
 async function createSubscription(params) {
   const config = getConfig();
 
-  // First charge: at least T+4 days from now (NPCI rule)
+  // First charge: dynamic based on frequency
+  // For 2-day subscriptions, use T+2 so the cycle starts right away
+  // For weekly/monthly, use T+5 for safe NPCI mandate activation buffer
   const now = new Date();
   const firstCharge = new Date(now);
-  firstCharge.setDate(firstCharge.getDate() + 5); // T+5 for safety margin
+  const firstChargeDays = (params.frequency === '2_day') ? 2 : 5;
+  firstCharge.setDate(firstCharge.getDate() + firstChargeDays);
   const firstChargeISO = params.firstChargeTime || firstCharge.toISOString();
 
   // Expiry: 10 years from now by default

@@ -122,6 +122,7 @@ router.post('/create', async (req, res) => {
       intervals: freq.intervals,
       productTitle: productTitle || 'Protein Pantry Subscription',
       productVariantId: productVariantId || '',
+      frequency, // Pass frequency so Cashfree API can set correct firstChargeTime
     });
 
     if (!subResult.success) {
@@ -134,7 +135,8 @@ router.post('/create', async (req, res) => {
     const endDate = new Date(today);
     endDate.setFullYear(endDate.getFullYear() + 1);
     const firstCharge = new Date(today);
-    firstCharge.setDate(firstCharge.getDate() + 5);
+    const firstChargeDays = (frequency === '2_day') ? 2 : 5;
+    firstCharge.setDate(firstCharge.getDate() + firstChargeDays);
 
     createSubscription({
       subscriptionId,

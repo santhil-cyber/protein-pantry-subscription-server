@@ -41,7 +41,7 @@ function getShopifyConfig() {
     clientSecret: process.env.SHOPIFY_CLIENT_SECRET || '',
     // Legacy: static admin token (fallback if client credentials not configured)
     staticToken: process.env.SHOPIFY_ADMIN_TOKEN || '',
-    apiVersion: '2024-01',
+    apiVersion: '2025-01',
   };
 }
 
