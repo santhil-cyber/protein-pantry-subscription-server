@@ -75,12 +75,22 @@ app.use('/api/payments', require('./routes/presentment'));
 // ── Health Check ──
 app.get('/health', (req, res) => {
   const env = process.env.CASHFREE_ENV || 'test';
+  const shopifyToken = process.env.SHOPIFY_ADMIN_TOKEN || '';
+  const shopifyClientId = process.env.SHOPIFY_CLIENT_ID || '';
+  const cashfreeAppId = process.env.CASHFREE_APP_ID || '';
   res.status(200).json({
     status: 'ok',
     environment: env,
     timestamp: new Date().toISOString(),
-    version: '2.0.0',
+    version: '2.1.0',
     gateway: 'cashfree',
+    config: {
+      shopify_token: shopifyToken ? `${shopifyToken.substring(0, 8)}...` : 'NOT SET',
+      shopify_client_id: shopifyClientId ? `${shopifyClientId.substring(0, 8)}...` : 'NOT SET',
+      shopify_domain: process.env.SHOPIFY_STORE_DOMAIN || 'NOT SET',
+      cashfree_app_id: cashfreeAppId ? `${cashfreeAppId.substring(0, 8)}...` : 'NOT SET',
+      cashfree_env: env,
+    },
   });
 });
 
