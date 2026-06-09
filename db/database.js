@@ -1,35 +1,121 @@
 /**
- * SQLite Database for Subscription Records
- * ------------------------------------------
- * Tracks subscriptions, mandate statuses, and webhook events.
- * Updated for Cashfree Payments Subscription API.
- * Uses better-sqlite3 for synchronous, zero-config SQLite.
+ * Subscription persistence layer.
+ * Uses Supabase/Postgres when DATABASE_URL (or SUPABASE_DATABASE_URL) is set,
+ * and falls back to local SQLite for development.
  */
 
-const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const Database = require('better-sqlite3');
+const { Pool } = require('pg');
 
-// Default is local dev. In production, set DB_PATH to a persistent Render disk
-// path, e.g. /var/data/subscriptions.db, or migrate this layer to Postgres.
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'subscriptions.db');
+const POSTGRES_URL = process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL || process.env.POSTGRES_URL || '';
 
-let db;
+let sqliteDb;
+let pgPool;
+let dbMode = POSTGRES_URL ? 'postgres' : 'sqlite';
 
-/**
- * Initializes the database and creates tables if they don't exist.
- * Called once at server startup.
- */
-function initDatabase() {
+async function initDatabase() {
+  if (dbMode === 'postgres') {
+    pgPool = new Pool({
+      connectionString: POSTGRES_URL,
+      ssl: shouldUseSsl(POSTGRES_URL) ? { rejectUnauthorized: false } : false,
+      max: Number(process.env.DB_POOL_MAX || 5),
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    });
+
+    await initPostgres();
+    console.log('[DB] Postgres initialized');
+    return pgPool;
+  }
+
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  db = new Database(DB_PATH);
+  sqliteDb = new Database(DB_PATH);
+  sqliteDb.pragma('journal_mode = WAL');
+  initSqlite();
+  console.log('[DB] SQLite initialized at', DB_PATH);
+  return sqliteDb;
+}
 
-  // Enable WAL mode for better concurrent read performance
-  db.pragma('journal_mode = WAL');
+function shouldUseSsl(url) {
+  return process.env.DB_SSL !== 'false' && !/localhost|127\.0\.0\.1/.test(url);
+}
 
-  // --- Subscriptions table ---
-  // Stores each customer's subscription with Cashfree mandate details
-  db.exec(`
+async function initPostgres() {
+  await pgPool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      id BIGSERIAL PRIMARY KEY,
+      subscription_id TEXT UNIQUE NOT NULL,
+      cf_subscription_id TEXT,
+      customer_name TEXT NOT NULL,
+      customer_email TEXT NOT NULL,
+      customer_phone TEXT NOT NULL,
+      product_title TEXT,
+      product_variant_id TEXT,
+      amount DOUBLE PRECISION NOT NULL,
+      frequency TEXT NOT NULL DEFAULT 'monthly',
+      plan_id TEXT,
+      plan_interval_type TEXT,
+      plan_intervals INTEGER DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'INITIALIZED',
+      session_id TEXT,
+      checkout_url TEXT,
+      start_date TEXT,
+      end_date TEXT,
+      first_charge_date TEXT,
+      last_payment_date TEXT,
+      next_schedule_date TEXT,
+      total_payments INTEGER DEFAULT 0,
+      shipping_address TEXT,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS webhook_events (
+      id BIGSERIAL PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      event_id TEXT,
+      subscription_id TEXT,
+      payload TEXT NOT NULL,
+      processed_at TIMESTAMPTZ DEFAULT now(),
+      UNIQUE(event_type, event_id, subscription_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS payment_history (
+      id BIGSERIAL PRIMARY KEY,
+      subscription_id TEXT NOT NULL,
+      cf_payment_id TEXT,
+      payment_amount DOUBLE PRECISION NOT NULL,
+      payment_status TEXT NOT NULL DEFAULT 'PENDING',
+      payment_type TEXT DEFAULT 'PERIODIC',
+      cf_payment_reference TEXT,
+      payment_method TEXT,
+      failure_reason TEXT,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      FOREIGN KEY (subscription_id) REFERENCES subscriptions(subscription_id)
+    );
+  `);
+
+  const subscriptionColumns = [
+    ['cf_subscription_id', 'TEXT'],
+    ['session_id', 'TEXT'],
+    ['plan_id', 'TEXT'],
+    ['plan_interval_type', 'TEXT'],
+    ['plan_intervals', 'INTEGER DEFAULT 1'],
+    ['first_charge_date', 'TEXT'],
+    ['next_schedule_date', 'TEXT'],
+    ['shipping_address', 'TEXT'],
+  ];
+
+  for (const [name, type] of subscriptionColumns) {
+    await pgPool.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS ${name} ${type}`);
+  }
+}
+
+function initSqlite() {
+  sqliteDb.exec(`
     CREATE TABLE IF NOT EXISTS subscriptions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       subscription_id TEXT UNIQUE NOT NULL,
@@ -56,39 +142,7 @@ function initDatabase() {
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
-  `);
 
-  // Add new columns if upgrading from old schema (graceful migration)
-  const columns = db.pragma('table_info(subscriptions)').map(c => c.name);
-  
-  if (!columns.includes('cf_subscription_id')) {
-    db.exec(`ALTER TABLE subscriptions ADD COLUMN cf_subscription_id TEXT;`);
-  }
-  if (!columns.includes('session_id')) {
-    db.exec(`ALTER TABLE subscriptions ADD COLUMN session_id TEXT;`);
-  }
-  if (!columns.includes('plan_id')) {
-    db.exec(`ALTER TABLE subscriptions ADD COLUMN plan_id TEXT;`);
-  }
-  if (!columns.includes('plan_interval_type')) {
-    db.exec(`ALTER TABLE subscriptions ADD COLUMN plan_interval_type TEXT;`);
-  }
-  if (!columns.includes('plan_intervals')) {
-    db.exec(`ALTER TABLE subscriptions ADD COLUMN plan_intervals INTEGER DEFAULT 1;`);
-  }
-  if (!columns.includes('first_charge_date')) {
-    db.exec(`ALTER TABLE subscriptions ADD COLUMN first_charge_date TEXT;`);
-  }
-  if (!columns.includes('next_schedule_date')) {
-    db.exec(`ALTER TABLE subscriptions ADD COLUMN next_schedule_date TEXT;`);
-  }
-  if (!columns.includes('shipping_address')) {
-    db.exec(`ALTER TABLE subscriptions ADD COLUMN shipping_address TEXT;`);
-  }
-
-  // --- Webhook Events table ---
-  // Ensures idempotency: each webhook event is processed only once
-  db.exec(`
     CREATE TABLE IF NOT EXISTS webhook_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       event_type TEXT NOT NULL,
@@ -98,11 +152,7 @@ function initDatabase() {
       processed_at TEXT DEFAULT (datetime('now')),
       UNIQUE(event_type, event_id, subscription_id)
     );
-  `);
 
-  // --- Payment History table ---
-  // Logs every payment (charge) attempt and its result
-  db.exec(`
     CREATE TABLE IF NOT EXISTS payment_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       subscription_id TEXT NOT NULL,
@@ -118,20 +168,43 @@ function initDatabase() {
     );
   `);
 
-  console.log('[DB] Database initialized at', DB_PATH);
-  return db;
+  const columns = sqliteDb.pragma('table_info(subscriptions)').map(c => c.name);
+  const addColumn = (name, definition) => {
+    if (!columns.includes(name)) sqliteDb.exec(`ALTER TABLE subscriptions ADD COLUMN ${definition}`);
+  };
+
+  addColumn('cf_subscription_id', 'cf_subscription_id TEXT');
+  addColumn('session_id', 'session_id TEXT');
+  addColumn('plan_id', 'plan_id TEXT');
+  addColumn('plan_interval_type', 'plan_interval_type TEXT');
+  addColumn('plan_intervals', 'plan_intervals INTEGER DEFAULT 1');
+  addColumn('first_charge_date', 'first_charge_date TEXT');
+  addColumn('next_schedule_date', 'next_schedule_date TEXT');
+  addColumn('shipping_address', 'shipping_address TEXT');
 }
 
-// ──────────────────────────────────────
-// Subscription CRUD Operations
-// ──────────────────────────────────────
+async function createSubscription(data) {
+  if (dbMode === 'postgres') {
+    return pgExec(`
+      INSERT INTO subscriptions (
+        subscription_id, cf_subscription_id, customer_name, customer_email,
+        customer_phone, product_title, product_variant_id, amount, frequency,
+        plan_id, plan_interval_type, plan_intervals, status, session_id,
+        checkout_url, start_date, end_date, first_charge_date, shipping_address
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9,
+        $10, $11, $12, 'INITIALIZED', $13,
+        $14, $15, $16, $17, $18
+      )
+    `, [
+      data.subscriptionId, data.cfSubscriptionId, data.customerName, data.customerEmail,
+      data.customerPhone, data.productTitle, data.productVariantId, data.amount, data.frequency,
+      data.planId, data.planIntervalType, data.planIntervals, data.sessionId,
+      data.checkoutUrl, data.startDate, data.endDate, data.firstChargeDate, data.shippingAddress,
+    ]);
+  }
 
-/**
- * Creates a new subscription record when a customer initiates the flow.
- * Status starts as 'INITIALIZED' until Cashfree confirms authorization.
- */
-function createSubscription(data) {
-  const stmt = db.prepare(`
+  return sqliteDb.prepare(`
     INSERT INTO subscriptions (
       subscription_id, cf_subscription_id, customer_name, customer_email,
       customer_phone, product_title, product_variant_id, amount, frequency,
@@ -143,19 +216,24 @@ function createSubscription(data) {
       @planId, @planIntervalType, @planIntervals, 'INITIALIZED', @sessionId,
       @checkoutUrl, @startDate, @endDate, @firstChargeDate, @shippingAddress
     )
-  `);
-
-  return stmt.run(data);
+  `).run(data);
 }
 
-/**
- * Updates a subscription's status.
- * Called when Cashfree webhooks arrive.
- *
- * Cashfree statuses: INITIALIZED, BANK_APPROVAL_PENDING, ACTIVE, ON_HOLD,
- *                    CANCELLED, COMPLETED, PAST_DUE_DATE
- */
-function updateSubscriptionStatus(subscriptionId, status, extraData = {}) {
+async function updateSubscriptionStatus(subscriptionId, status, extraData = {}) {
+  if (dbMode === 'postgres') {
+    const assignments = ['status = $2', 'updated_at = now()'];
+    const params = [subscriptionId, status];
+
+    addOptionalAssignment(assignments, params, extraData.cfSubscriptionId, 'cf_subscription_id');
+    addOptionalAssignment(assignments, params, extraData.lastPaymentDate, 'last_payment_date');
+    addOptionalAssignment(assignments, params, extraData.nextScheduleDate, 'next_schedule_date');
+
+    return pgExec(
+      `UPDATE subscriptions SET ${assignments.join(', ')} WHERE subscription_id = $1`,
+      params
+    );
+  }
+
   let setClause = `status = @status, updated_at = datetime('now')`;
   const params = { subscriptionId, status };
 
@@ -172,69 +250,113 @@ function updateSubscriptionStatus(subscriptionId, status, extraData = {}) {
     params.nextScheduleDate = extraData.nextScheduleDate;
   }
 
-  const stmt = db.prepare(
+  return sqliteDb.prepare(
     `UPDATE subscriptions SET ${setClause} WHERE subscription_id = @subscriptionId`
-  );
-
-  return stmt.run(params);
+  ).run(params);
 }
 
-/** Increments the total_payments counter after a successful charge */
-function incrementPaymentCount(subscriptionId) {
-  const stmt = db.prepare(`
+function addOptionalAssignment(assignments, params, value, columnName) {
+  if (!value) return;
+  params.push(value);
+  assignments.push(`${columnName} = $${params.length}`);
+}
+
+async function incrementPaymentCount(subscriptionId) {
+  if (dbMode === 'postgres') {
+    return pgExec(`
+      UPDATE subscriptions
+      SET total_payments = total_payments + 1, updated_at = now()
+      WHERE subscription_id = $1
+    `, [subscriptionId]);
+  }
+
+  return sqliteDb.prepare(`
     UPDATE subscriptions
     SET total_payments = total_payments + 1, updated_at = datetime('now')
     WHERE subscription_id = ?
-  `);
-  return stmt.run(subscriptionId);
+  `).run(subscriptionId);
 }
 
-/** Retrieves a subscription by its subscription ID */
-function getSubscriptionById(subscriptionId) {
-  return db.prepare('SELECT * FROM subscriptions WHERE subscription_id = ?').get(subscriptionId);
+async function getSubscriptionById(subscriptionId) {
+  if (dbMode === 'postgres') {
+    return pgOne('SELECT * FROM subscriptions WHERE subscription_id = $1', [subscriptionId]);
+  }
+
+  return sqliteDb.prepare('SELECT * FROM subscriptions WHERE subscription_id = ?').get(subscriptionId);
 }
 
-/** Retrieves all subscriptions for a customer by email */
-function getSubscriptionsByEmail(email) {
-  return db.prepare('SELECT * FROM subscriptions WHERE customer_email = ? ORDER BY created_at DESC').all(email);
+async function getSubscriptionsByEmail(email) {
+  if (dbMode === 'postgres') {
+    return pgAll('SELECT * FROM subscriptions WHERE customer_email = $1 ORDER BY created_at DESC', [email]);
+  }
+
+  return sqliteDb.prepare('SELECT * FROM subscriptions WHERE customer_email = ? ORDER BY created_at DESC').all(email);
 }
 
-/** Retrieves all active subscriptions (for admin dashboard) */
-function getActiveSubscriptions() {
-  return db.prepare("SELECT * FROM subscriptions WHERE status = 'ACTIVE' OR status = 'BANK_APPROVAL_PENDING'").all();
+async function getActiveSubscriptions() {
+  if (dbMode === 'postgres') {
+    return pgAll("SELECT * FROM subscriptions WHERE status = 'ACTIVE' OR status = 'BANK_APPROVAL_PENDING'");
+  }
+
+  return sqliteDb.prepare("SELECT * FROM subscriptions WHERE status = 'ACTIVE' OR status = 'BANK_APPROVAL_PENDING'").all();
 }
 
-// ──────────────────────────────────────
-// Webhook Idempotency
-// ──────────────────────────────────────
+async function isWebhookProcessed(eventType, eventId, subscriptionId) {
+  const params = [eventType, eventId || '', subscriptionId || ''];
 
-/**
- * Checks if a webhook event has already been processed.
- * Prevents duplicate processing if Cashfree retries delivery.
- */
-function isWebhookProcessed(eventType, eventId, subscriptionId) {
-  const row = db.prepare(
+  if (dbMode === 'postgres') {
+    const row = await pgOne(
+      'SELECT id FROM webhook_events WHERE event_type = $1 AND event_id = $2 AND subscription_id = $3',
+      params
+    );
+    return !!row;
+  }
+
+  const row = sqliteDb.prepare(
     'SELECT id FROM webhook_events WHERE event_type = ? AND event_id = ? AND subscription_id = ?'
-  ).get(eventType, eventId || '', subscriptionId || '');
+  ).get(...params);
   return !!row;
 }
 
-/** Records a webhook event as processed */
-function markWebhookProcessed(eventType, eventId, subscriptionId, payload) {
-  const stmt = db.prepare(`
+async function markWebhookProcessed(eventType, eventId, subscriptionId, payload) {
+  const params = [eventType, eventId || '', subscriptionId || '', JSON.stringify(payload)];
+
+  if (dbMode === 'postgres') {
+    return pgExec(`
+      INSERT INTO webhook_events (event_type, event_id, subscription_id, payload)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (event_type, event_id, subscription_id) DO NOTHING
+    `, params);
+  }
+
+  return sqliteDb.prepare(`
     INSERT OR IGNORE INTO webhook_events (event_type, event_id, subscription_id, payload)
     VALUES (?, ?, ?, ?)
-  `);
-  return stmt.run(eventType, eventId || '', subscriptionId || '', JSON.stringify(payload));
+  `).run(...params);
 }
 
-// ──────────────────────────────────────
-// Payment History
-// ──────────────────────────────────────
+async function recordPayment(data) {
+  const params = [
+    data.subscriptionId,
+    data.cfPaymentId,
+    data.paymentAmount,
+    data.paymentStatus,
+    data.paymentType,
+    data.cfPaymentReference,
+    data.paymentMethod,
+    data.failureReason,
+  ];
 
-/** Logs a payment attempt */
-function recordPayment(data) {
-  const stmt = db.prepare(`
+  if (dbMode === 'postgres') {
+    return pgExec(`
+      INSERT INTO payment_history (
+        subscription_id, cf_payment_id, payment_amount, payment_status,
+        payment_type, cf_payment_reference, payment_method, failure_reason
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `, params);
+  }
+
+  return sqliteDb.prepare(`
     INSERT INTO payment_history (
       subscription_id, cf_payment_id, payment_amount, payment_status,
       payment_type, cf_payment_reference, payment_method, failure_reason
@@ -242,18 +364,41 @@ function recordPayment(data) {
       @subscriptionId, @cfPaymentId, @paymentAmount, @paymentStatus,
       @paymentType, @cfPaymentReference, @paymentMethod, @failureReason
     )
-  `);
-  return stmt.run(data);
+  `).run(data);
 }
 
-/** Updates a payment record's status */
-function updatePaymentStatus(cfPaymentId, status, failureReason) {
-  const stmt = db.prepare(`
+async function updatePaymentStatus(cfPaymentId, status, failureReason) {
+  if (dbMode === 'postgres') {
+    return pgExec(
+      'UPDATE payment_history SET payment_status = $1, failure_reason = $2 WHERE cf_payment_id = $3',
+      [status, failureReason || null, cfPaymentId]
+    );
+  }
+
+  return sqliteDb.prepare(`
     UPDATE payment_history
     SET payment_status = ?, failure_reason = ?
     WHERE cf_payment_id = ?
-  `);
-  return stmt.run(status, failureReason || null, cfPaymentId);
+  `).run(status, failureReason || null, cfPaymentId);
+}
+
+async function pgExec(query, params = []) {
+  const result = await pgPool.query(query, params);
+  return { changes: result.rowCount, rowCount: result.rowCount };
+}
+
+async function pgOne(query, params = []) {
+  const result = await pgPool.query(query, params);
+  return result.rows[0] || null;
+}
+
+async function pgAll(query, params = []) {
+  const result = await pgPool.query(query, params);
+  return result.rows;
+}
+
+function getDatabaseMode() {
+  return dbMode;
 }
 
 module.exports = {
@@ -268,4 +413,5 @@ module.exports = {
   markWebhookProcessed,
   recordPayment,
   updatePaymentStatus,
+  getDatabaseMode,
 };

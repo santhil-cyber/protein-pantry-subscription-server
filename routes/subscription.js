@@ -148,7 +148,7 @@ router.post('/create', async (req, res) => {
       firstCharge.setDate(firstCharge.getDate() + firstChargeDays);
     }
 
-    createSubscription({
+    await createSubscription({
       subscriptionId,
       cfSubscriptionId: subResult.cfSubscriptionId || '',
       customerName: customerName.trim(),
@@ -192,7 +192,7 @@ router.get('/status/:subId', async (req, res) => {
     const { subId } = req.params;
     if (!subId) return res.status(400).json({ success: false, error: 'Subscription ID is required' });
 
-    const subscription = getSubscriptionById(subId);
+    const subscription = await getSubscriptionById(subId);
     if (!subscription) return res.status(404).json({ success: false, error: 'Subscription not found' });
 
     if (['INITIALIZED', 'BANK_APPROVAL_PENDING', 'ACTIVE'].includes(subscription.status)) {
@@ -216,13 +216,13 @@ router.get('/status/:subId', async (req, res) => {
 /**
  * GET /api/subscription/customer/:email
  */
-router.get('/customer/:email', (req, res) => {
+router.get('/customer/:email', async (req, res) => {
   try {
     const { email } = req.params;
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ success: false, error: 'Valid email is required' });
     }
-    const subscriptions = getSubscriptionsByEmail(email.toLowerCase());
+    const subscriptions = await getSubscriptionsByEmail(email.toLowerCase());
     return res.status(200).json({ success: true, subscriptions });
   } catch (error) {
     console.error('[Subscription] Customer lookup error:', error);
@@ -236,7 +236,7 @@ router.get('/customer/:email', (req, res) => {
 router.post('/cancel/:subId', async (req, res) => {
   try {
     const { subId } = req.params;
-    const subscription = getSubscriptionById(subId);
+    const subscription = await getSubscriptionById(subId);
     if (!subscription) return res.status(404).json({ success: false, error: 'Subscription not found' });
 
     if (['CANCELLED', 'COMPLETED'].includes(subscription.status)) {
@@ -245,11 +245,11 @@ router.post('/cancel/:subId', async (req, res) => {
 
     const result = await manageSubscription(subId, 'CANCEL');
     if (result.success) {
-      updateSubscriptionStatus(subId, 'CANCELLED');
+      await updateSubscriptionStatus(subId, 'CANCELLED');
       return res.status(200).json({ success: true, message: 'Subscription cancelled successfully' });
     }
 
-    updateSubscriptionStatus(subId, 'CANCEL_REQUESTED');
+    await updateSubscriptionStatus(subId, 'CANCEL_REQUESTED');
     return res.status(200).json({
       success: true,
       message: 'Cancellation request submitted. May take a few minutes to process.',

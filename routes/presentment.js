@@ -20,9 +20,9 @@ const { getSubscriptionById, getActiveSubscriptions } = require('../db/database'
  * Lists all active subscriptions.
  * Useful for admin dashboards.
  */
-router.get('/active', (req, res) => {
+router.get('/active', async (req, res) => {
   try {
-    const active = getActiveSubscriptions();
+    const active = await getActiveSubscriptions();
     return res.status(200).json({
       success: true,
       count: active.length,
@@ -48,7 +48,7 @@ router.get('/status/:subId', async (req, res) => {
     }
 
     // Check local DB
-    const local = getSubscriptionById(subId);
+    const local = await getSubscriptionById(subId);
     if (!local) {
       return res.status(404).json({ success: false, error: 'Subscription not found in local records' });
     }

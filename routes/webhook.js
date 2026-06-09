@@ -72,15 +72,15 @@ router.post('/cashfree', async (req, res) => {
     console.log(`[Webhook] Received event: ${type}`, getEventSummary(type, data));
 
     if (STATUS_EVENTS.has(type)) {
-      return handleSubscriptionUpdate(type, data, res);
+      return await handleSubscriptionUpdate(type, data, res);
     }
 
     if (type === 'SUBSCRIPTION_AUTH_STATUS') {
-      return handleAuthStatus(type, data, eventTime, res);
+      return await handleAuthStatus(type, data, eventTime, res);
     }
 
     if (PAYMENT_EVENTS.has(type)) {
-      return handlePaymentUpdate(type, data, eventTime, res);
+      return await handlePaymentUpdate(type, data, eventTime, res);
     }
 
     console.warn(`[Webhook] Unknown event type: ${type}`);
@@ -91,7 +91,7 @@ router.post('/cashfree', async (req, res) => {
   }
 });
 
-function handleSubscriptionUpdate(eventType, data, res) {
+async function handleSubscriptionUpdate(eventType, data, res) {
   const subData = getSubscriptionDetails(data);
   const subscriptionId = subData.subscription_id || '';
   const cfSubscriptionId = subData.cf_subscription_id || '';
@@ -102,17 +102,17 @@ function handleSubscriptionUpdate(eventType, data, res) {
     return res.status(400).json({ error: 'Missing subscription_id' });
   }
 
-  if (isWebhookProcessed(eventType, eventId, subscriptionId)) {
+  if (await isWebhookProcessed(eventType, eventId, subscriptionId)) {
     console.log(`[Webhook] Subscription update already processed: ${subscriptionId}`);
     return res.status(200).json({ received: true, duplicate: true });
   }
 
-  const result = updateSubscriptionStatus(subscriptionId, status, {
+  const result = await updateSubscriptionStatus(subscriptionId, status, {
     cfSubscriptionId,
     nextScheduleDate: subData.next_schedule_date || null,
   });
 
-  markWebhookProcessed(eventType, eventId, subscriptionId, data);
+  await markWebhookProcessed(eventType, eventId, subscriptionId, data);
 
   if (result.changes === 0) {
     console.warn(`[Webhook] Subscription status update had no local row: ${subscriptionId}`);
@@ -122,7 +122,7 @@ function handleSubscriptionUpdate(eventType, data, res) {
   return res.status(200).json({ received: true, status });
 }
 
-function handleAuthStatus(eventType, data, eventTime, res) {
+async function handleAuthStatus(eventType, data, eventTime, res) {
   const paymentData = getPaymentData(data);
   const subscriptionId = paymentData.subscription_id || '';
   const cfSubscriptionId = paymentData.cf_subscription_id || '';
@@ -137,12 +137,12 @@ function handleAuthStatus(eventType, data, eventTime, res) {
     return res.status(400).json({ error: 'Missing subscription_id' });
   }
 
-  if (isWebhookProcessed(eventType, eventId, subscriptionId)) {
+  if (await isWebhookProcessed(eventType, eventId, subscriptionId)) {
     console.log(`[Webhook] Auth update already processed: ${eventId}`);
     return res.status(200).json({ received: true, duplicate: true });
   }
 
-  safeRecordPayment({
+  await safeRecordPayment({
     subscriptionId,
     cfPaymentId: paymentData.cf_payment_id || paymentData.payment_id || null,
     paymentAmount: paymentData.payment_amount || 0,
@@ -153,11 +153,11 @@ function handleAuthStatus(eventType, data, eventTime, res) {
     failureReason: getFailureReason(paymentData),
   });
 
-  updateSubscriptionStatus(subscriptionId, localStatus, {
+  await updateSubscriptionStatus(subscriptionId, localStatus, {
     cfSubscriptionId,
   });
 
-  markWebhookProcessed(eventType, eventId, subscriptionId, data);
+  await markWebhookProcessed(eventType, eventId, subscriptionId, data);
 
   console.log(`[Webhook] Authorization ${paymentStatus} for ${subscriptionId}; no Shopify order created`);
   return res.status(200).json({ received: true, status: paymentStatus, orderCreated: false });
@@ -176,12 +176,12 @@ async function handlePaymentUpdate(eventType, data, eventTime, res) {
     return res.status(400).json({ error: 'Missing subscription_id' });
   }
 
-  if (isWebhookProcessed(eventType, eventId, subscriptionId)) {
+  if (await isWebhookProcessed(eventType, eventId, subscriptionId)) {
     console.log(`[Webhook] Payment update already processed: ${eventId}`);
     return res.status(200).json({ received: true, duplicate: true });
   }
 
-  safeRecordPayment({
+  await safeRecordPayment({
     subscriptionId,
     cfPaymentId: paymentData.cf_payment_id || paymentData.payment_id || null,
     paymentAmount: paymentData.payment_amount || 0,
@@ -194,9 +194,9 @@ async function handlePaymentUpdate(eventType, data, eventTime, res) {
 
   if (status === 'SUCCESS') {
     if (shouldCreateShopifyOrder(eventType, paymentData)) {
-      incrementPaymentCount(subscriptionId);
+      await incrementPaymentCount(subscriptionId);
 
-      updateSubscriptionStatus(subscriptionId, 'ACTIVE', {
+      await updateSubscriptionStatus(subscriptionId, 'ACTIVE', {
         lastPaymentDate: new Date().toISOString().split('T')[0],
         nextScheduleDate: paymentData.next_schedule_date || paymentData.payment_schedule_date || null,
       });
@@ -208,7 +208,7 @@ async function handlePaymentUpdate(eventType, data, eventTime, res) {
       }
       console.log(`[Webhook] Shopify order created: #${result.orderNumber} for ${subscriptionId}`);
     } else {
-      updateSubscriptionStatus(subscriptionId, 'ACTIVE', {
+      await updateSubscriptionStatus(subscriptionId, 'ACTIVE', {
         nextScheduleDate: paymentData.next_schedule_date || paymentData.payment_schedule_date || null,
       });
       console.log(`[Webhook] Payment SUCCESS for ${subscriptionId}, but it is an authorization event; order skipped`);
@@ -221,7 +221,7 @@ async function handlePaymentUpdate(eventType, data, eventTime, res) {
     console.log(`[Webhook] Payment ${status || 'updated'} for ${subscriptionId}`);
   }
 
-  markWebhookProcessed(eventType, eventId, subscriptionId, data);
+  await markWebhookProcessed(eventType, eventId, subscriptionId, data);
 
   return res.status(200).json({ received: true, status });
 }
@@ -247,7 +247,7 @@ async function createOrderForPayment(subscriptionId, paymentData, eventId) {
 }
 
 async function getSubscriptionForOrder(subscriptionId, paymentData) {
-  const local = getSubscriptionById(subscriptionId);
+  const local = await getSubscriptionById(subscriptionId);
   if (local) return local;
 
   console.warn(`[Webhook] No local subscription row for ${subscriptionId}; fetching from Cashfree`);
@@ -338,11 +338,11 @@ function getFailureReason(paymentData) {
   );
 }
 
-function safeRecordPayment(data) {
+async function safeRecordPayment(data) {
   try {
-    return recordPayment(data);
+    return await recordPayment(data);
   } catch (error) {
-    if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+    if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY' || error.code === '23503') {
       console.warn(`[Webhook] Payment history skipped; no local subscription row: ${data.subscriptionId}`);
       return null;
     }
