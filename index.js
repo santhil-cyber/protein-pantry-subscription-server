@@ -88,7 +88,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     environment: env,
     timestamp: new Date().toISOString(),
-    version: '2.3.1',
+    version: '2.4.0',
     gateway: 'cashfree',
     config: {
       shopify_token: shopifyToken ? `${shopifyToken.substring(0, 8)}...` : 'NOT SET',
@@ -221,7 +221,7 @@ app.listen(PORT, () => {
   const env = process.env.CASHFREE_ENV || 'test';
   console.log('');
   console.log('╔═══════════════════════════════════════════════════╗');
-  console.log('║  Protein Pantry Subscription Server v2.3.1        ║');
+  console.log('║  Protein Pantry Subscription Server v2.4          ║');
   console.log(`║  Gateway: Cashfree Payments                       ║`);
   console.log(`║  Environment: ${env.padEnd(38)}║`);
   console.log(`║  Port: ${String(PORT).padEnd(44)}║`);

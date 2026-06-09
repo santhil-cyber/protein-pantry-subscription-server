@@ -78,7 +78,7 @@ router.post('/create', async (req, res) => {
       });
     }
 
-    const validFrequencies = ['2_day', '1_week', '2_week', '3_week', 'monthly'];
+    const validFrequencies = ['1_day', '2_day', '1_week', '2_week', '3_week', 'monthly'];
     if (!frequency || !validFrequencies.includes(frequency)) {
       return res.status(400).json({
         success: false,
@@ -144,7 +144,7 @@ router.post('/create', async (req, res) => {
     if (firstChargeTime?.iso) {
       firstCharge.setTime(new Date(firstChargeTime.iso).getTime());
     } else {
-      const firstChargeDays = (frequency === '2_day') ? 2 : 5;
+      const firstChargeDays = frequency === '1_day' ? 1 : (frequency === '2_day' ? 2 : 5);
       firstCharge.setDate(firstCharge.getDate() + firstChargeDays);
     }
 

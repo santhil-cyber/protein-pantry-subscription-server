@@ -75,6 +75,7 @@ function generatePlanId(productHandle, intervalType, intervals, amount) {
 
   // Use full words — Cashfree sandbox crashes on IDs like "1W" or "2M"
   const freqSuffix = {
+    'DAY_1': 'daily',
     'DAY_2': '2daily',
     'WEEK_1': 'weekly',
     'WEEK_2': '2weekly',
@@ -92,11 +93,12 @@ function generatePlanId(productHandle, intervalType, intervals, amount) {
 /**
  * Maps user-facing frequency names to Cashfree plan parameters.
  *
- * @param {string} frequency - One of: '1_week', '2_week', '3_week', 'monthly'
+ * @param {string} frequency - One of: '1_day', '2_day', '1_week', '2_week', '3_week', 'monthly'
  * @returns {{ intervalType: string, intervals: number, label: string }}
  */
 function mapFrequency(frequency) {
   const frequencyMap = {
+    '1_day':  { intervalType: 'DAY',  intervals: 1, label: 'Every Day' },
     '2_day':  { intervalType: 'DAY',  intervals: 2, label: 'Every 2 Days' },
     '1_week': { intervalType: 'WEEK', intervals: 1, label: 'Every Week' },
     '2_week': { intervalType: 'WEEK', intervals: 2, label: 'Every 2 Weeks' },
@@ -252,7 +254,7 @@ async function createSubscription(params) {
   // For weekly/monthly, use T+5 for safe NPCI mandate activation buffer
   const now = new Date();
   const firstCharge = new Date(now);
-  const firstChargeDays = (params.frequency === '2_day') ? 2 : 5;
+  const firstChargeDays = params.frequency === '1_day' ? 1 : (params.frequency === '2_day' ? 2 : 5);
   firstCharge.setDate(firstCharge.getDate() + firstChargeDays);
   const firstChargeISO = params.firstChargeTime || firstCharge.toISOString();
 
