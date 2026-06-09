@@ -50,14 +50,15 @@ router.get('/address-lookup/:phone', async (req, res) => {
  * POST /api/subscription/create
  * ──────────────────────────────
  * Body: { customerName, customerEmail, customerPhone, amount, frequency,
- *         productTitle, productVariantId, productHandle, shippingAddress }
+ *         productTitle, productVariantId, productHandle, shippingAddress,
+ *         firstChargeDelayHours }
  */
 router.post('/create', async (req, res) => {
   try {
     const {
       customerName, customerEmail, customerPhone,
       amount, frequency, productTitle, productVariantId, productHandle,
-      shippingAddress,
+      shippingAddress, firstChargeDelayHours,
     } = req.body;
 
     // ── Input Validation ──
@@ -87,6 +88,10 @@ router.post('/create', async (req, res) => {
 
     // ── Map frequency to Cashfree plan parameters ──
     const freq = mapFrequency(frequency);
+    const firstChargeTime = getFirstChargeTimeOverride(firstChargeDelayHours);
+    if (firstChargeTime?.error) {
+      return res.status(400).json({ success: false, error: firstChargeTime.error });
+    }
 
     // ── Step 1: Create or reuse a Cashfree Plan ──
     const planId = generatePlanId(productHandle, freq.intervalType, freq.intervals, amount);
@@ -123,6 +128,7 @@ router.post('/create', async (req, res) => {
       productTitle: productTitle || 'Protein Pantry Subscription',
       productVariantId: productVariantId || '',
       frequency, // Pass frequency so Cashfree API can set correct firstChargeTime
+      firstChargeTime: firstChargeTime?.iso || null,
     });
 
     if (!subResult.success) {
@@ -135,8 +141,12 @@ router.post('/create', async (req, res) => {
     const endDate = new Date(today);
     endDate.setFullYear(endDate.getFullYear() + 1);
     const firstCharge = new Date(today);
-    const firstChargeDays = (frequency === '2_day') ? 2 : 5;
-    firstCharge.setDate(firstCharge.getDate() + firstChargeDays);
+    if (firstChargeTime?.iso) {
+      firstCharge.setTime(new Date(firstChargeTime.iso).getTime());
+    } else {
+      const firstChargeDays = (frequency === '2_day') ? 2 : 5;
+      firstCharge.setDate(firstCharge.getDate() + firstChargeDays);
+    }
 
     createSubscription({
       subscriptionId,
@@ -166,6 +176,7 @@ router.post('/create', async (req, res) => {
       subscriptionId,
       checkoutUrl: subResult.checkoutUrl,
       sessionId: subResult.sessionId,
+      firstChargeTime: firstCharge.toISOString(),
     });
   } catch (error) {
     console.error('[Subscription] Create error:', error);
@@ -248,5 +259,22 @@ router.post('/cancel/:subId', async (req, res) => {
     return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
+
+function getFirstChargeTimeOverride(firstChargeDelayHours) {
+  if (firstChargeDelayHours === undefined || firstChargeDelayHours === null || firstChargeDelayHours === '') {
+    return null;
+  }
+
+  if (process.env.ALLOW_TEST_FIRST_CHARGE_DELAY !== 'true') {
+    return { error: 'First charge delay override is disabled' };
+  }
+
+  const hours = Number(firstChargeDelayHours);
+  if (!Number.isFinite(hours) || hours < 1 || hours > 48) {
+    return { error: 'firstChargeDelayHours must be a number between 1 and 48' };
+  }
+
+  return { iso: new Date(Date.now() + hours * 60 * 60 * 1000).toISOString() };
+}
 
 module.exports = router;
