@@ -270,8 +270,8 @@ function getFirstChargeTimeOverride(firstChargeDelayHours) {
   }
 
   const hours = Number(firstChargeDelayHours);
-  if (!Number.isFinite(hours) || hours < 1 || hours > 48) {
-    return { error: 'firstChargeDelayHours must be a number between 1 and 48' };
+  if (!Number.isFinite(hours) || hours < 24 || hours > 48) {
+    return { error: 'UPI AutoPay first charge cannot be scheduled within 2 hours. Use firstChargeDelayHours between 24 and 48.' };
   }
 
   return { iso: new Date(Date.now() + hours * 60 * 60 * 1000).toISOString() };
