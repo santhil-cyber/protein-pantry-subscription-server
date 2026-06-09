@@ -169,6 +169,10 @@ async function createShopifyOrder(params) {
   const firstName = nameParts[0] || 'Subscriber';
   const lastName = nameParts.slice(1).join(' ') || '';
 
+  const uniquePaymentTag = params.transactionId
+    ? `cashfree-payment-${String(params.transactionId).replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 40)}`
+    : '';
+
   // Build the order payload
   const orderPayload = {
     order: {
@@ -185,9 +189,16 @@ async function createShopifyOrder(params) {
       // Fulfillment status — ready for fulfillment
       fulfillment_status: null,
       // Tags for easy filtering in Shopify Admin
-      tags: 'subscription-order, autopay, upi-mandate, cashfree',
+      tags: ['subscription-order', 'autopay', 'upi-mandate', 'cashfree', uniquePaymentTag]
+        .filter(Boolean)
+        .join(', '),
       // Note for staff reference
-      note: `Subscription auto-order via UPI AutoPay.\nSubscription ID: ${params.transactionId}\nFrequency: ${params.frequency || 'monthly'}`,
+      note: [
+        'Subscription auto-order via UPI AutoPay.',
+        `Subscription ID: ${params.subscriptionId || params.transactionId}`,
+        `Cashfree Payment/Event ID: ${params.transactionId}`,
+        `Frequency: ${params.frequency || 'monthly'}`,
+      ].join('\n'),
       // Don't send order confirmation email (optional — set to true if you want emails)
       send_receipt: true,
       send_fulfillment_receipt: true,

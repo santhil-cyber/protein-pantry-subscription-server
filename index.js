@@ -53,8 +53,13 @@ app.use(cors({
 }));
 
 // ── Body Parsing ──
-// JSON for API calls and Cashfree webhooks
-app.use(express.json({ limit: '1mb' }));
+// Keep the exact raw JSON string so Cashfree webhook signatures can be verified.
+app.use(express.json({
+  limit: '1mb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString('utf8');
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // ── Request Logging ──
@@ -78,11 +83,12 @@ app.get('/health', (req, res) => {
   const shopifyToken = process.env.SHOPIFY_ADMIN_TOKEN || '';
   const shopifyClientId = process.env.SHOPIFY_CLIENT_ID || '';
   const cashfreeAppId = process.env.CASHFREE_APP_ID || '';
+  const cashfreeWebhookSecret = process.env.CASHFREE_WEBHOOK_SECRET || '';
   res.status(200).json({
     status: 'ok',
     environment: env,
     timestamp: new Date().toISOString(),
-    version: '2.1.0',
+    version: '2.2.0',
     gateway: 'cashfree',
     config: {
       shopify_token: shopifyToken ? `${shopifyToken.substring(0, 8)}...` : 'NOT SET',
@@ -90,6 +96,8 @@ app.get('/health', (req, res) => {
       shopify_domain: process.env.SHOPIFY_STORE_DOMAIN || 'NOT SET',
       cashfree_app_id: cashfreeAppId ? `${cashfreeAppId.substring(0, 8)}...` : 'NOT SET',
       cashfree_env: env,
+      cashfree_webhook_secret: cashfreeWebhookSecret ? 'SET' : 'NOT SET',
+      db_path: process.env.DB_PATH || 'default-local-sqlite',
     },
   });
 });
@@ -212,7 +220,7 @@ app.listen(PORT, () => {
   const env = process.env.CASHFREE_ENV || 'test';
   console.log('');
   console.log('╔═══════════════════════════════════════════════════╗');
-  console.log('║  Protein Pantry Subscription Server v2.0          ║');
+  console.log('║  Protein Pantry Subscription Server v2.2          ║');
   console.log(`║  Gateway: Cashfree Payments                       ║`);
   console.log(`║  Environment: ${env.padEnd(38)}║`);
   console.log(`║  Port: ${String(PORT).padEnd(44)}║`);

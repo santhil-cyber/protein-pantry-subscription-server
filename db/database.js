@@ -8,9 +8,11 @@
 
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
-// Database file lives alongside the server code
-const DB_PATH = path.join(__dirname, '..', 'subscriptions.db');
+// Default is local dev. In production, set DB_PATH to a persistent Render disk
+// path, e.g. /var/data/subscriptions.db, or migrate this layer to Postgres.
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'subscriptions.db');
 
 let db;
 
@@ -19,6 +21,7 @@ let db;
  * Called once at server startup.
  */
 function initDatabase() {
+  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   db = new Database(DB_PATH);
 
   // Enable WAL mode for better concurrent read performance

@@ -22,6 +22,7 @@ function getConfig() {
   return {
     appId: process.env.CASHFREE_APP_ID || '',
     secretKey: process.env.CASHFREE_SECRET_KEY || '',
+    webhookSecret: process.env.CASHFREE_WEBHOOK_SECRET || process.env.CASHFREE_SECRET_KEY || '',
     apiVersion: process.env.CASHFREE_API_VERSION || '2025-01-01',
     baseUrl: isProduction
       ? 'https://api.cashfree.com/pg'
@@ -293,6 +294,7 @@ async function createSubscription(params) {
     subscription_tags: {
       product_title: params.productTitle || '',
       product_variant_id: params.productVariantId || '',
+      frequency: params.frequency || '',
       source: 'protein-pantry-pdp',
     },
   };
@@ -400,24 +402,28 @@ async function manageSubscription(subscriptionId, action) {
 
 /**
  * Verifies a Cashfree webhook signature.
- * Cashfree sends the signature in the `x-cashfree-signature` header.
- * The signature is computed as HMAC-SHA256(timestamp + rawBody, secretKey).
+ * Cashfree sends the signature in `x-webhook-signature` for current
+ * subscription webhooks. Older integrations may use `x-cashfree-signature`.
+ * The signature is computed as HMAC-SHA256(timestamp + rawBody, webhookSecret).
  *
  * @param {string} rawBody - Raw request body string
- * @param {string} timestamp - The `x-cashfree-timestamp` header value
- * @param {string} signature - The `x-cashfree-signature` header value
+ * @param {string} timestamp - The webhook timestamp header value
+ * @param {string} signature - The webhook signature header value
  * @returns {boolean} Whether the signature is valid
  */
 function verifyWebhookSignature(rawBody, timestamp, signature) {
   const config = getConfig();
+  if (!config.webhookSecret || !timestamp || !signature || !rawBody) return false;
 
   const signatureData = timestamp + rawBody;
   const computedSignature = crypto
-    .createHmac('sha256', config.secretKey)
+    .createHmac('sha256', config.webhookSecret)
     .update(signatureData)
     .digest('base64');
 
-  return computedSignature === signature;
+  const computed = Buffer.from(computedSignature);
+  const received = Buffer.from(signature);
+  return computed.length === received.length && crypto.timingSafeEqual(computed, received);
 }
 
 module.exports = {
