@@ -366,6 +366,31 @@ async function fetchSubscription(subscriptionId) {
 }
 
 /**
+ * Fetches all payments for a subscription from Cashfree.
+ *
+ * @param {string} subscriptionId - The subscription ID
+ * @returns {Promise<object>}
+ */
+async function fetchSubscriptionPayments(subscriptionId) {
+  const config = getConfig();
+
+  try {
+    const response = await axios.get(
+      `${config.baseUrl}/subscriptions/${subscriptionId}/payments`,
+      { headers: getHeaders(), timeout: 15000 }
+    );
+
+    return { success: true, data: Array.isArray(response.data) ? response.data : [] };
+  } catch (error) {
+    console.error('[Cashfree] Fetch subscription payments failed:', error.response?.data || error.message);
+    return {
+      success: false,
+      error: error.response?.data?.message || error.message,
+    };
+  }
+}
+
+/**
  * Manages a subscription (cancel, pause, resume, change plan).
  *
  * @param {string} subscriptionId - The subscription to manage
@@ -437,6 +462,7 @@ module.exports = {
   fetchPlan,
   createSubscription,
   fetchSubscription,
+  fetchSubscriptionPayments,
   manageSubscription,
   verifyWebhookSignature,
 };

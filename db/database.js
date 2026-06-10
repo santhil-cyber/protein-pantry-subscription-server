@@ -335,6 +335,55 @@ async function markWebhookProcessed(eventType, eventId, subscriptionId, payload)
   `).run(...params);
 }
 
+async function isPaymentOrderProcessed(eventId, subscriptionId) {
+  const params = [eventId || '', subscriptionId || ''];
+
+  if (dbMode === 'postgres') {
+    const row = await pgOne(`
+      SELECT id FROM webhook_events
+      WHERE event_id = $1
+        AND subscription_id = $2
+        AND event_type IN (
+          'SUBSCRIPTION_PAYMENT_SUCCESS',
+          'PAYMENT_STATUS_UPDATE',
+          'SUBSCRIPTION_PAYMENT_CONTROLLED_EXECUTION_STATUS',
+          'RECONCILE_PAYMENT_SUCCESS'
+        )
+      LIMIT 1
+    `, params);
+    return !!row;
+  }
+
+  const row = sqliteDb.prepare(`
+    SELECT id FROM webhook_events
+    WHERE event_id = ?
+      AND subscription_id = ?
+      AND event_type IN (
+        'SUBSCRIPTION_PAYMENT_SUCCESS',
+        'PAYMENT_STATUS_UPDATE',
+        'SUBSCRIPTION_PAYMENT_CONTROLLED_EXECUTION_STATUS',
+        'RECONCILE_PAYMENT_SUCCESS'
+      )
+    LIMIT 1
+  `).get(...params);
+  return !!row;
+}
+
+async function getPaymentByReference(subscriptionId, cfPaymentId) {
+  if (!cfPaymentId) return null;
+
+  if (dbMode === 'postgres') {
+    return pgOne(
+      'SELECT * FROM payment_history WHERE subscription_id = $1 AND cf_payment_id = $2 LIMIT 1',
+      [subscriptionId, cfPaymentId]
+    );
+  }
+
+  return sqliteDb.prepare(
+    'SELECT * FROM payment_history WHERE subscription_id = ? AND cf_payment_id = ? LIMIT 1'
+  ).get(subscriptionId, cfPaymentId);
+}
+
 async function recordPayment(data) {
   const params = [
     data.subscriptionId,
@@ -411,6 +460,8 @@ module.exports = {
   getActiveSubscriptions,
   isWebhookProcessed,
   markWebhookProcessed,
+  isPaymentOrderProcessed,
+  getPaymentByReference,
   recordPayment,
   updatePaymentStatus,
   getDatabaseMode,

@@ -11,6 +11,8 @@
  *   POST /api/webhook/cashfree            — Cashfree webhook receiver
  *   GET  /api/payments/active             — List active subscriptions
  *   GET  /api/payments/status/:id         — Get live status from Cashfree
+ *   GET  /api/payments/history/:id        — Get Cashfree payment history
+ *   POST /api/payments/reconcile/:id      — Recover missed payment webhooks
  *   GET  /health                          — Health check
  */
 
@@ -85,7 +87,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     environment: env,
     timestamp: new Date().toISOString(),
-    version: '2.5.0',
+    version: '2.6.0',
     gateway: 'cashfree',
     config: {
       shopify_token: shopifyToken ? `${shopifyToken.substring(0, 8)}...` : 'NOT SET',

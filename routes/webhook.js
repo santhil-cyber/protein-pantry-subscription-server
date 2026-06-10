@@ -17,6 +17,8 @@ const {
   incrementPaymentCount,
   isWebhookProcessed,
   markWebhookProcessed,
+  isPaymentOrderProcessed,
+  getPaymentByReference,
   recordPayment,
   getSubscriptionById,
 } = require('../db/database');
@@ -32,6 +34,7 @@ const PAYMENT_EVENTS = new Set([
   'SUBSCRIPTION_PAYMENT_SUCCESS',
   'SUBSCRIPTION_PAYMENT_FAILED',
   'SUBSCRIPTION_PAYMENT_CANCELLED',
+  'SUBSCRIPTION_PAYMENT_CONTROLLED_NOTIFICATION_STATUS',
   'SUBSCRIPTION_PAYMENT_CONTROLLED_EXECUTION_STATUS',
   'PAYMENT_STATUS_UPDATE',
 ]);
@@ -194,6 +197,12 @@ async function handlePaymentUpdate(eventType, data, eventTime, res) {
 
   if (status === 'SUCCESS') {
     if (shouldCreateShopifyOrder(eventType, paymentData)) {
+      if (await isPaymentOrderProcessed(eventId, subscriptionId)) {
+        console.log(`[Webhook] Shopify order already processed for payment ${eventId}`);
+        await markWebhookProcessed(eventType, eventId, subscriptionId, data);
+        return res.status(200).json({ received: true, status, duplicateOrder: true });
+      }
+
       await incrementPaymentCount(subscriptionId);
 
       await updateSubscriptionStatus(subscriptionId, 'ACTIVE', {
@@ -340,6 +349,9 @@ function getFailureReason(paymentData) {
 
 async function safeRecordPayment(data) {
   try {
+    if (data.cfPaymentId && await getPaymentByReference(data.subscriptionId, data.cfPaymentId)) {
+      return null;
+    }
     return await recordPayment(data);
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY' || error.code === '23503') {
