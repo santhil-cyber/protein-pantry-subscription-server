@@ -44,6 +44,12 @@ const PAYMENT_EVENTS = new Set([
  */
 router.post('/cashfree', async (req, res) => {
   try {
+    const body = parseBody(req);
+    if (isCashfreeDashboardTest(body)) {
+      console.log('[Webhook] Cashfree dashboard test received');
+      return res.status(200).json({ received: true, test: true });
+    }
+
     const signature = getHeader(req, ['x-webhook-signature', 'x-cashfree-signature']);
     const timestamp = getHeader(req, ['x-webhook-timestamp', 'x-cashfree-timestamp']);
     const rawBody = getRawBody(req);
@@ -64,7 +70,6 @@ router.post('/cashfree', async (req, res) => {
       }
     }
 
-    const body = parseBody(req);
     const { type, data, event_time: eventTime } = body;
 
     if (!type || !data) {
@@ -389,6 +394,24 @@ function getRawBody(req) {
 function parseBody(req) {
   if (typeof req.body === 'string') return JSON.parse(req.body);
   return req.body;
+}
+
+function isCashfreeDashboardTest(body) {
+  const type = String(body?.type || '').toUpperCase();
+  if (['WEBHOOK', 'TEST', 'TEST_WEBHOOK'].includes(type)) return true;
+  if (body?.data?.test_object) return true;
+
+  const data = body?.data || {};
+  const paymentData = getPaymentData(data);
+  const subData = getSubscriptionDetails(data);
+  const subscriptionId = subData.subscription_id || paymentData.subscription_id || '';
+  const paymentId = paymentData.payment_id || paymentData.cf_payment_id || '';
+
+  return (
+    /^test[-_]/i.test(subscriptionId) ||
+    subscriptionId === 'test-subscription-id' ||
+    /^test[-_]/i.test(paymentId)
+  );
 }
 
 module.exports = router;
