@@ -22,7 +22,7 @@ function getConfig() {
   return {
     appId: process.env.CASHFREE_APP_ID || '',
     secretKey: process.env.CASHFREE_SECRET_KEY || '',
-    webhookSecret: process.env.CASHFREE_WEBHOOK_SECRET || process.env.CASHFREE_SECRET_KEY || '',
+    webhookSecret: getWebhookSecrets()[0] || '',
     apiVersion: process.env.CASHFREE_API_VERSION || '2025-01-01',
     baseUrl: isProduction
       ? 'https://api.cashfree.com/pg'
@@ -439,18 +439,32 @@ async function manageSubscription(subscriptionId, action) {
  * @returns {boolean} Whether the signature is valid
  */
 function verifyWebhookSignature(rawBody, timestamp, signature) {
-  const config = getConfig();
-  if (!config.webhookSecret || !timestamp || !signature || !rawBody) return false;
+  const secrets = getWebhookSecrets();
+  if (!secrets.length || !timestamp || !signature || !rawBody) return false;
 
   const signatureData = timestamp + rawBody;
-  const computedSignature = crypto
-    .createHmac('sha256', config.webhookSecret)
-    .update(signatureData)
-    .digest('base64');
+  const received = Buffer.from(String(signature));
 
-  const computed = Buffer.from(computedSignature);
-  const received = Buffer.from(signature);
-  return computed.length === received.length && crypto.timingSafeEqual(computed, received);
+  return secrets.some((secret) => {
+    const computedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(signatureData)
+      .digest('base64');
+
+    const computed = Buffer.from(computedSignature);
+    return computed.length === received.length && crypto.timingSafeEqual(computed, received);
+  });
+}
+
+function getWebhookSecrets() {
+  return [
+    process.env.CASHFREE_WEBHOOK_SECRET,
+    process.env.CASHFREE_SECRET_KEY,
+  ]
+    .map((secret) => String(secret || '').trim())
+    .filter(Boolean)
+    .filter((secret) => !/^https?:\/\//i.test(secret))
+    .filter((secret, index, secrets) => secrets.indexOf(secret) === index);
 }
 
 module.exports = {
