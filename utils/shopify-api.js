@@ -251,6 +251,7 @@ async function createShopifyOrder(params) {
     orderPayload.order.line_items.push({
       variant_id: parseInt(params.variantId, 10),
       quantity: 1,
+      price: params.amount.toString(),
     });
   } else {
     // Fallback: custom line item with title and price
