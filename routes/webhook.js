@@ -184,6 +184,11 @@ async function handleAuthStatus(eventType, data, eventTime, res) {
       return res.status(502).json({ received: false, error: 'Shopify order failed' });
     }
 
+    await markWebhookProcessed('SHOPIFY_ORDER_CREATED', eventId, subscriptionId, {
+      source_event_type: eventType,
+      order_id: result.orderId,
+      order_number: result.orderNumber,
+    });
     await markWebhookProcessed(eventType, eventId, subscriptionId, data);
     console.log(`[Webhook] Initial Shopify order created: #${result.orderNumber} for ${subscriptionId}`);
     return res.status(200).json({ received: true, status: paymentStatus, orderCreated: true });
@@ -244,6 +249,11 @@ async function handlePaymentUpdate(eventType, data, eventTime, res) {
         console.error(`[Webhook] Shopify order FAILED for ${subscriptionId}:`, result.error);
         return res.status(502).json({ received: false, error: 'Shopify order failed' });
       }
+      await markWebhookProcessed('SHOPIFY_ORDER_CREATED', eventId, subscriptionId, {
+        source_event_type: eventType,
+        order_id: result.orderId,
+        order_number: result.orderNumber,
+      });
       console.log(`[Webhook] Shopify order created: #${result.orderNumber} for ${subscriptionId}`);
     } else {
       await updateSubscriptionStatus(subscriptionId, 'ACTIVE', {
@@ -287,6 +297,7 @@ async function createOrderForPayment(subscriptionId, paymentData, eventId) {
     subscriptionId,
     frequency: subscription.frequency,
     shippingAddress: subscription.shipping_address ? JSON.parse(subscription.shipping_address) : null,
+    items: safeParseItems(subscription.product_items),
   });
 }
 
@@ -339,6 +350,17 @@ function isPaidInitialAuthorization(paymentData) {
 
   if (paymentType && paymentType !== 'AUTH') return false;
   return amount > 1 && (authStatus === 'ACTIVE' || paymentStatus === 'SUCCESS');
+}
+
+function safeParseItems(value) {
+  if (!value) return null;
+  if (Array.isArray(value)) return value;
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    console.warn('[Webhook] Could not parse product_items JSON for Shopify order');
+    return null;
+  }
 }
 
 function normalizePaymentStatus(eventType, paymentData) {

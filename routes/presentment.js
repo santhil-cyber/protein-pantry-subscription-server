@@ -114,7 +114,8 @@ router.get('/history/:subId', async (req, res) => {
  * GET/POST /api/payments/reconcile/:subId
  * ─────────────────────────────────────
  * Pulls Cashfree state directly and creates missing Shopify orders for
- * successful subscription CHARGE payments. Safe to retry.
+ * successful subscription CHARGE payments and the paid initial AUTH.
+ * Safe to retry.
  */
 router.get('/reconcile/:subId', reconcileHandler);
 router.post('/reconcile/:subId', reconcileHandler);
@@ -169,8 +170,8 @@ async function reconcileSubscription(subId) {
 
     await recordPaymentOnce(subId, payment, summary);
 
-    if (!isSuccessfulCharge(payment)) {
-      skipped.push({ ...summary, reason: 'not_successful_charge' });
+    if (!isOrderablePayment(payment)) {
+      skipped.push({ ...summary, reason: 'not_orderable_payment' });
       continue;
     }
 
@@ -197,6 +198,11 @@ async function reconcileSubscription(subId) {
       nextScheduleDate: live.success ? live.data.next_schedule_date : null,
     });
     await markWebhookProcessed('RECONCILE_PAYMENT_SUCCESS', paymentId, subId, payment);
+    await markWebhookProcessed('SHOPIFY_ORDER_CREATED', paymentId, subId, {
+      source_event_type: 'RECONCILE_PAYMENT_SUCCESS',
+      order_id: order.orderId,
+      order_number: order.orderNumber,
+    });
 
     createdOrders.push({
       payment_id: paymentId,
@@ -244,15 +250,20 @@ async function createOrderForPayment(subscription, payment, paymentId) {
     subscriptionId: subscription.subscription_id,
     frequency: subscription.frequency,
     shippingAddress: subscription.shipping_address ? JSON.parse(subscription.shipping_address) : null,
+    items: safeParseItems(subscription.product_items),
   });
 }
 
-function isSuccessfulCharge(payment) {
-  return (
-    String(payment.payment_type || '').toUpperCase() === 'CHARGE' &&
-    String(payment.payment_status || '').toUpperCase() === 'SUCCESS' &&
-    Number(payment.payment_amount || 0) > 0
-  );
+function isOrderablePayment(payment) {
+  const paymentType = String(payment.payment_type || '').toUpperCase();
+  const paymentStatus = String(payment.payment_status || '').toUpperCase();
+  const authStatus = String(payment.authorization_details?.authorization_status || '').toUpperCase();
+  const amount = Number(payment.payment_amount || payment.authorization_details?.authorization_amount || 0);
+
+  if (amount <= 1) return false;
+  if (paymentType === 'CHARGE') return paymentStatus === 'SUCCESS';
+  if (paymentType === 'AUTH') return paymentStatus === 'SUCCESS' || authStatus === 'ACTIVE';
+  return false;
 }
 
 function getPaymentEventId(payment, subId) {
@@ -292,6 +303,17 @@ function summarizePayment(payment) {
     retry_attempts: payment.retry_attempts || 0,
     failure_reason: payment.failure_details?.failure_reason || payment.failureDetails?.failureReason || null,
   };
+}
+
+function safeParseItems(value) {
+  if (!value) return null;
+  if (Array.isArray(value)) return value;
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    console.warn('[Payments] Could not parse product_items JSON for Shopify order');
+    return null;
+  }
 }
 
 module.exports = router;

@@ -348,10 +348,10 @@ async function isPaymentOrderProcessed(eventId, subscriptionId) {
       WHERE event_id = $1
         AND subscription_id = $2
         AND event_type IN (
+          'SHOPIFY_ORDER_CREATED',
           'SUBSCRIPTION_PAYMENT_SUCCESS',
           'PAYMENT_STATUS_UPDATE',
           'SUBSCRIPTION_PAYMENT_CONTROLLED_EXECUTION_STATUS',
-          'SUBSCRIPTION_AUTH_STATUS',
           'RECONCILE_PAYMENT_SUCCESS'
         )
       LIMIT 1
@@ -364,10 +364,10 @@ async function isPaymentOrderProcessed(eventId, subscriptionId) {
     WHERE event_id = ?
       AND subscription_id = ?
       AND event_type IN (
+        'SHOPIFY_ORDER_CREATED',
         'SUBSCRIPTION_PAYMENT_SUCCESS',
         'PAYMENT_STATUS_UPDATE',
         'SUBSCRIPTION_PAYMENT_CONTROLLED_EXECUTION_STATUS',
-        'SUBSCRIPTION_AUTH_STATUS',
         'RECONCILE_PAYMENT_SUCCESS'
       )
     LIMIT 1
