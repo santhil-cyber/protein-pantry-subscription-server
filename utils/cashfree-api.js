@@ -109,6 +109,46 @@ function mapFrequency(frequency) {
   return frequencyMap[frequency] || frequencyMap['monthly'];
 }
 
+function getFirstRecurringChargeTime(params, nowMs = Date.now()) {
+  // Initial delivery is paid during mandate authorization. Schedule the first
+  // automatic debit one billing interval later to avoid a double charge.
+  const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000; // +05:30
+  const TARGET_HOUR_IST = 9;
+  const MIN_BUFFER_MS = 2 * 60 * 60 * 1000;
+  const offset = getBillingIntervalOffset(params);
+
+  const istNow = new Date(nowMs + IST_OFFSET_MS);
+  const y = istNow.getUTCFullYear();
+  const m = istNow.getUTCMonth();
+  const d = istNow.getUTCDate();
+
+  let targetMs = Date.UTC(
+    y,
+    m + offset.months,
+    d + offset.days,
+    TARGET_HOUR_IST,
+    0,
+    0
+  ) - IST_OFFSET_MS;
+
+  if (targetMs - nowMs < MIN_BUFFER_MS) targetMs += 24 * 60 * 60 * 1000;
+  return new Date(targetMs).toISOString();
+}
+
+function getBillingIntervalOffset(params) {
+  const intervals = Math.max(1, Number(params.intervals || 1));
+  const intervalType = String(params.intervalType || '').toUpperCase();
+
+  if (intervalType === 'DAY') return { days: intervals, months: 0 };
+  if (intervalType === 'WEEK') return { days: intervals * 7, months: 0 };
+  if (intervalType === 'MONTH') return { days: 0, months: intervals };
+
+  const fallback = mapFrequency(params.frequency);
+  if (fallback.intervalType === 'DAY') return { days: fallback.intervals, months: 0 };
+  if (fallback.intervalType === 'WEEK') return { days: fallback.intervals * 7, months: 0 };
+  return { days: 0, months: 1 };
+}
+
 // ──────────────────────────────────────
 // Plans API
 // ──────────────────────────────────────
@@ -159,8 +199,15 @@ async function createPlan(params) {
       console.log(`[Cashfree] Plan created: ${params.planId}`);
       return { success: true, data: response.data };
     } catch (error) {
-      // Plan already exists is fine (409 Conflict)
-      if (error.response?.status === 409) {
+      const errData = error.response?.data || {};
+      const errMessage = String(errData.message || errData.error || error.message || '');
+      const planAlreadyExists =
+        error.response?.status === 409 ||
+        errData.code === 'plan_already_exists' ||
+        /plan already exists?/i.test(errMessage);
+
+      // Plan already exists is fine. Cashfree may send this as 409 or 400.
+      if (planAlreadyExists) {
         console.log(`[Cashfree] Plan already exists: ${params.planId}`);
         return { success: true, data: { plan_id: params.planId }, alreadyExists: true };
       }
@@ -249,23 +296,16 @@ async function fetchPlan(planId) {
 async function createSubscription(params) {
   const config = getConfig();
 
-  // First charge: dynamic based on frequency
-  // For 2-day subscriptions, use T+2 so the cycle starts right away
-  // For weekly/monthly, use T+5 for safe NPCI mandate activation buffer
-  const now = new Date();
-  const firstCharge = new Date(now);
-  const firstChargeDays = params.frequency === '1_day' ? 1 : (params.frequency === '2_day' ? 2 : 5);
-  firstCharge.setDate(firstCharge.getDate() + firstChargeDays);
-  const firstChargeISO = params.firstChargeTime || firstCharge.toISOString();
+  const nowMs = Date.now();
+  const firstChargeISO = params.firstChargeTime || getFirstRecurringChargeTime(params, nowMs);
+  const authorizationAmount = params.authorizationAmount || params.amount;
 
   // Expiry: 10 years from now by default
-  const expiry = new Date(now);
-  expiry.setFullYear(expiry.getFullYear() + 10);
+  const expiry = new Date(nowMs + 10 * 365.25 * 24 * 60 * 60 * 1000);
   const expiryISO = params.expiryTime || expiry.toISOString();
 
   // Session expiry: 30 min from now
-  const sessionExpiry = new Date(now);
-  sessionExpiry.setMinutes(sessionExpiry.getMinutes() + 30);
+  const sessionExpiry = new Date(nowMs + 30 * 60 * 1000);
 
   const returnUrl = params.returnUrl
     || process.env.SUCCESS_RETURN_URL
@@ -282,8 +322,8 @@ async function createSubscription(params) {
       plan_id: params.planId,
     },
     authorization_details: {
-      authorization_amount: 1, // ₹1 auth amount (refunded automatically)
-      authorization_amount_refund: true,
+      authorization_amount: authorizationAmount,
+      authorization_amount_refund: false,
       payment_methods: ['upi'], // ← UPI AUTOPAY ONLY
     },
     subscription_meta: {
@@ -297,6 +337,7 @@ async function createSubscription(params) {
       product_title: params.productTitle || '',
       product_variant_id: params.productVariantId || '',
       frequency: params.frequency || '',
+      initial_charge_mode: 'authorization_amount',
       source: 'protein-pantry-pdp',
     },
   };
@@ -329,6 +370,8 @@ async function createSubscription(params) {
       cfSubscriptionId: data.cf_subscription_id,
       sessionId,
       checkoutUrl,
+      firstChargeTime: firstChargeISO,
+      initialChargeAmount: authorizationAmount,
     };
   } catch (error) {
     console.error('[Cashfree] Subscription creation failed:', error.response?.data || error.message);

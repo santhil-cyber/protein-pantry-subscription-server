@@ -27,7 +27,7 @@ const {
   getSubscriptionsByEmail,
   updateSubscriptionStatus,
 } = require('../db/database');
-const { lookupCustomerAddress } = require('../utils/shopify-api');
+const { lookupCustomerAddress, getVariantCurrentPrice } = require('../utils/shopify-api');
 
 /**
  * GET /api/subscription/address-lookup/:phone
@@ -46,19 +46,101 @@ router.get('/address-lookup/:phone', async (req, res) => {
   }
 });
 
+const FREQUENCY_DISCOUNTS = {
+  '1_day': 0,
+  '2_day': 3,
+  '1_week': 5,
+  '2_week': 8,
+  '3_week': 10,
+  monthly: 12,
+};
+
+async function resolveCurrentAmount(items, productVariantId, requestedAmount, frequency) {
+  const discountMultiplier = 1 - ((FREQUENCY_DISCOUNTS[frequency] || 0) / 100);
+  const selectedItems = normalizeSelectedItems(items);
+  if (selectedItems.length > 0) {
+    const pricedItems = [];
+    let total = 0;
+
+    for (const item of selectedItems) {
+      const priceResult = await getVariantCurrentPrice(item.variantId);
+      if (!priceResult.success) {
+        return {
+          error: 'Could not verify current Shopify product price. Please try again.',
+          status: 502,
+        };
+      }
+
+      pricedItems.push({
+        variantId: item.variantId,
+        quantity: item.quantity,
+        title: item.title,
+        handle: item.handle,
+        price: roundMoney(priceResult.price * discountMultiplier),
+      });
+      total += roundMoney(priceResult.price * discountMultiplier) * item.quantity;
+    }
+
+    return { value: Math.round(total), items: pricedItems };
+  }
+
+  if (productVariantId) {
+    const priceResult = await getVariantCurrentPrice(productVariantId);
+    if (!priceResult.success) {
+      return {
+        error: 'Could not verify current Shopify product price. Please try again.',
+        status: 502,
+      };
+    }
+    return {
+      value: Math.round(priceResult.price * discountMultiplier),
+      items: [{
+        variantId: String(productVariantId),
+        quantity: 1,
+        title: '',
+        handle: '',
+        price: roundMoney(priceResult.price * discountMultiplier),
+      }],
+    };
+  }
+
+  if (typeof requestedAmount !== 'number' || !Number.isFinite(requestedAmount)) {
+    return { error: 'Valid amount is required' };
+  }
+
+  return { value: requestedAmount, items: [] };
+}
+
+function normalizeSelectedItems(items) {
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .map((item) => ({
+      variantId: String(item.variantId || item.vid || '').trim(),
+      quantity: Math.max(0, parseInt(item.quantity || item.qty || 0, 10)),
+      title: String(item.title || '').trim().substring(0, 100),
+      handle: String(item.handle || '').trim().substring(0, 100),
+    }))
+    .filter((item) => /^\d+$/.test(item.variantId) && item.quantity > 0);
+}
+
+function roundMoney(value) {
+  return Math.round(value * 100) / 100;
+}
+
 /**
  * POST /api/subscription/create
  * ──────────────────────────────
  * Body: { customerName, customerEmail, customerPhone, amount, frequency,
- *         productTitle, productVariantId, productHandle, shippingAddress,
+ *         productTitle, productVariantId, productHandle, items, shippingAddress,
  *         firstChargeDelayHours }
  */
 router.post('/create', async (req, res) => {
   try {
     const {
       customerName, customerEmail, customerPhone,
-      amount, frequency, productTitle, productVariantId, productHandle,
-      shippingAddress, firstChargeDelayHours,
+      amount: requestedAmount, frequency, productTitle, productVariantId, productHandle,
+      items, shippingAddress, firstChargeDelayHours,
     } = req.body;
 
     // ── Input Validation ──
@@ -71,12 +153,6 @@ router.post('/create', async (req, res) => {
     if (!customerPhone || !/^[6-9]\d{9}$/.test(customerPhone)) {
       return res.status(400).json({ success: false, error: 'Valid 10-digit Indian phone number is required' });
     }
-    if (!amount || typeof amount !== 'number' || amount < 1 || amount > 15000) {
-      return res.status(400).json({
-        success: false,
-        error: 'Amount must be between ₹1 and ₹15,000 (UPI AutoPay limit)',
-      });
-    }
 
     const validFrequencies = ['1_day', '2_day', '1_week', '2_week', '3_week', 'monthly'];
     if (!frequency || !validFrequencies.includes(frequency)) {
@@ -84,6 +160,23 @@ router.post('/create', async (req, res) => {
         success: false,
         error: `Invalid frequency. Must be one of: ${validFrequencies.join(', ')}`,
       });
+    }
+
+    const amount = await resolveCurrentAmount(items, productVariantId, requestedAmount, frequency);
+    if (amount.error) {
+      return res.status(amount.status || 400).json({ success: false, error: amount.error });
+    }
+
+    if (!amount.value || amount.value < 1 || amount.value > 15000) {
+      return res.status(400).json({
+        success: false,
+        error: 'Amount must be between ₹1 and ₹15,000 (UPI AutoPay limit)',
+      });
+    }
+    if (typeof requestedAmount === 'number' && Math.abs(requestedAmount - amount.value) >= 0.01) {
+      console.warn(
+        `[Subscription] Client amount ₹${requestedAmount} overridden by Shopify current price ₹${amount.value}`
+      );
     }
 
     // ── Map frequency to Cashfree plan parameters ──
@@ -94,13 +187,13 @@ router.post('/create', async (req, res) => {
     }
 
     // ── Step 1: Create or reuse a Cashfree Plan ──
-    const planId = generatePlanId(productHandle, freq.intervalType, freq.intervals, amount);
+    const planId = generatePlanId(productHandle, freq.intervalType, freq.intervals, amount.value);
 
     const planResult = await createPlan({
       planId,
       planName: `${(productTitle || 'Protein Pantry').replace(/[^a-zA-Z0-9 _-]/g, '')} - ${freq.label}`.substring(0, 40),
-      amount,
-      maxAmount: amount,
+      amount: amount.value,
+      maxAmount: amount.value,
       intervalType: freq.intervalType,
       intervals: freq.intervals,
       maxCycles: freq.intervalType === 'MONTH' ? 12 : 52,
@@ -121,8 +214,8 @@ router.post('/create', async (req, res) => {
       customerName: customerName.trim(),
       customerEmail: customerEmail.trim().toLowerCase(),
       customerPhone: customerPhone.trim(),
-      amount,
-      maxAmount: amount,
+      amount: amount.value,
+      maxAmount: amount.value,
       intervalType: freq.intervalType,
       intervals: freq.intervals,
       productTitle: productTitle || 'Protein Pantry Subscription',
@@ -140,13 +233,9 @@ router.post('/create', async (req, res) => {
     const today = new Date();
     const endDate = new Date(today);
     endDate.setFullYear(endDate.getFullYear() + 1);
-    const firstCharge = new Date(today);
-    if (firstChargeTime?.iso) {
-      firstCharge.setTime(new Date(firstChargeTime.iso).getTime());
-    } else {
-      const firstChargeDays = frequency === '1_day' ? 1 : (frequency === '2_day' ? 2 : 5);
-      firstCharge.setDate(firstCharge.getDate() + firstChargeDays);
-    }
+    // Initial payment is collected during UPI mandate authorization.
+    // Cashfree firstChargeTime is the next automatic renewal debit.
+    const nextRecurringCharge = new Date(subResult.firstChargeTime);
 
     await createSubscription({
       subscriptionId,
@@ -156,7 +245,8 @@ router.post('/create', async (req, res) => {
       customerPhone: customerPhone.trim(),
       productTitle: productTitle || '',
       productVariantId: productVariantId || '',
-      amount,
+      productItems: amount.items.length > 0 ? JSON.stringify(amount.items) : null,
+      amount: amount.value,
       frequency,
       planId,
       planIntervalType: freq.intervalType,
@@ -165,18 +255,21 @@ router.post('/create', async (req, res) => {
       checkoutUrl: subResult.checkoutUrl || '',
       startDate: today.toISOString().split('T')[0],
       endDate: endDate.toISOString().split('T')[0],
-      firstChargeDate: firstCharge.toISOString().split('T')[0],
+      firstChargeDate: today.toISOString().split('T')[0],
+      nextScheduleDate: nextRecurringCharge.toISOString(),
       shippingAddress: shippingAddress ? JSON.stringify(shippingAddress) : null,
     });
 
-    console.log(`[Subscription] Created: ${subscriptionId} for ${customerEmail} — ₹${amount}/${frequency}`);
+    console.log(`[Subscription] Created: ${subscriptionId} for ${customerEmail} — ₹${amount.value}/${frequency}`);
 
     return res.status(200).json({
       success: true,
       subscriptionId,
       checkoutUrl: subResult.checkoutUrl,
       sessionId: subResult.sessionId,
-      firstChargeTime: firstCharge.toISOString(),
+      amount: amount.value,
+      firstChargeTime: today.toISOString(),
+      nextScheduleDate: nextRecurringCharge.toISOString(),
     });
   } catch (error) {
     console.error('[Subscription] Create error:', error);

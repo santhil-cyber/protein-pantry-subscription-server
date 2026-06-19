@@ -54,6 +54,7 @@ async function initPostgres() {
       customer_phone TEXT NOT NULL,
       product_title TEXT,
       product_variant_id TEXT,
+      product_items TEXT,
       amount DOUBLE PRECISION NOT NULL,
       frequency TEXT NOT NULL DEFAULT 'monthly',
       plan_id TEXT,
@@ -107,6 +108,7 @@ async function initPostgres() {
     ['first_charge_date', 'TEXT'],
     ['next_schedule_date', 'TEXT'],
     ['shipping_address', 'TEXT'],
+    ['product_items', 'TEXT'],
   ];
 
   for (const [name, type] of subscriptionColumns) {
@@ -125,6 +127,7 @@ function initSqlite() {
       customer_phone TEXT NOT NULL,
       product_title TEXT,
       product_variant_id TEXT,
+      product_items TEXT,
       amount REAL NOT NULL,
       frequency TEXT NOT NULL DEFAULT 'monthly',
       plan_id TEXT,
@@ -181,6 +184,7 @@ function initSqlite() {
   addColumn('first_charge_date', 'first_charge_date TEXT');
   addColumn('next_schedule_date', 'next_schedule_date TEXT');
   addColumn('shipping_address', 'shipping_address TEXT');
+  addColumn('product_items', 'product_items TEXT');
 }
 
 async function createSubscription(data) {
@@ -188,33 +192,33 @@ async function createSubscription(data) {
     return pgExec(`
       INSERT INTO subscriptions (
         subscription_id, cf_subscription_id, customer_name, customer_email,
-        customer_phone, product_title, product_variant_id, amount, frequency,
+        customer_phone, product_title, product_variant_id, product_items, amount, frequency,
         plan_id, plan_interval_type, plan_intervals, status, session_id,
-        checkout_url, start_date, end_date, first_charge_date, shipping_address
+        checkout_url, start_date, end_date, first_charge_date, next_schedule_date, shipping_address
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9,
-        $10, $11, $12, 'INITIALIZED', $13,
-        $14, $15, $16, $17, $18
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, 'INITIALIZED', $14,
+        $15, $16, $17, $18, $19, $20
       )
     `, [
       data.subscriptionId, data.cfSubscriptionId, data.customerName, data.customerEmail,
-      data.customerPhone, data.productTitle, data.productVariantId, data.amount, data.frequency,
+      data.customerPhone, data.productTitle, data.productVariantId, data.productItems, data.amount, data.frequency,
       data.planId, data.planIntervalType, data.planIntervals, data.sessionId,
-      data.checkoutUrl, data.startDate, data.endDate, data.firstChargeDate, data.shippingAddress,
+      data.checkoutUrl, data.startDate, data.endDate, data.firstChargeDate, data.nextScheduleDate, data.shippingAddress,
     ]);
   }
 
   return sqliteDb.prepare(`
     INSERT INTO subscriptions (
       subscription_id, cf_subscription_id, customer_name, customer_email,
-      customer_phone, product_title, product_variant_id, amount, frequency,
+      customer_phone, product_title, product_variant_id, product_items, amount, frequency,
       plan_id, plan_interval_type, plan_intervals, status, session_id,
-      checkout_url, start_date, end_date, first_charge_date, shipping_address
+      checkout_url, start_date, end_date, first_charge_date, next_schedule_date, shipping_address
     ) VALUES (
       @subscriptionId, @cfSubscriptionId, @customerName, @customerEmail,
-      @customerPhone, @productTitle, @productVariantId, @amount, @frequency,
+      @customerPhone, @productTitle, @productVariantId, @productItems, @amount, @frequency,
       @planId, @planIntervalType, @planIntervals, 'INITIALIZED', @sessionId,
-      @checkoutUrl, @startDate, @endDate, @firstChargeDate, @shippingAddress
+      @checkoutUrl, @startDate, @endDate, @firstChargeDate, @nextScheduleDate, @shippingAddress
     )
   `).run(data);
 }
@@ -347,6 +351,7 @@ async function isPaymentOrderProcessed(eventId, subscriptionId) {
           'SUBSCRIPTION_PAYMENT_SUCCESS',
           'PAYMENT_STATUS_UPDATE',
           'SUBSCRIPTION_PAYMENT_CONTROLLED_EXECUTION_STATUS',
+          'SUBSCRIPTION_AUTH_STATUS',
           'RECONCILE_PAYMENT_SUCCESS'
         )
       LIMIT 1
@@ -362,6 +367,7 @@ async function isPaymentOrderProcessed(eventId, subscriptionId) {
         'SUBSCRIPTION_PAYMENT_SUCCESS',
         'PAYMENT_STATUS_UPDATE',
         'SUBSCRIPTION_PAYMENT_CONTROLLED_EXECUTION_STATUS',
+        'SUBSCRIPTION_AUTH_STATUS',
         'RECONCILE_PAYMENT_SUCCESS'
       )
     LIMIT 1

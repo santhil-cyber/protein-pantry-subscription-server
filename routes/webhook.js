@@ -1,9 +1,8 @@
 /**
  * Webhook Route - Cashfree Subscription Events
  * ------------------------------------------------
- * Receives Cashfree subscription webhooks and creates Shopify orders only for
- * successful subscription charge payments. Mandate authorization payments are
- * recorded but do not create delivery orders.
+ * Receives Cashfree subscription webhooks and creates Shopify orders for paid
+ * subscription payments, including the initial paid UPI mandate authorization.
  */
 
 const express = require('express');
@@ -165,6 +164,31 @@ async function handleAuthStatus(eventType, data, eventTime, res) {
     cfSubscriptionId,
   });
 
+  if (isPaidInitialAuthorization(paymentData)) {
+    if (await isPaymentOrderProcessed(eventId, subscriptionId)) {
+      console.log(`[Webhook] Initial paid authorization order already processed for ${eventId}`);
+      await markWebhookProcessed(eventType, eventId, subscriptionId, data);
+      return res.status(200).json({ received: true, status: paymentStatus, duplicateOrder: true });
+    }
+
+    await incrementPaymentCount(subscriptionId);
+    await updateSubscriptionStatus(subscriptionId, 'ACTIVE', {
+      cfSubscriptionId,
+      lastPaymentDate: new Date().toISOString().split('T')[0],
+      nextScheduleDate: paymentData.next_schedule_date || paymentData.payment_schedule_date || null,
+    });
+
+    const result = await createOrderForPayment(subscriptionId, paymentData, eventId);
+    if (!result.success) {
+      console.error(`[Webhook] Initial Shopify order FAILED for ${subscriptionId}:`, result.error);
+      return res.status(502).json({ received: false, error: 'Shopify order failed' });
+    }
+
+    await markWebhookProcessed(eventType, eventId, subscriptionId, data);
+    console.log(`[Webhook] Initial Shopify order created: #${result.orderNumber} for ${subscriptionId}`);
+    return res.status(200).json({ received: true, status: paymentStatus, orderCreated: true });
+  }
+
   await markWebhookProcessed(eventType, eventId, subscriptionId, data);
 
   console.log(`[Webhook] Authorization ${paymentStatus} for ${subscriptionId}; no Shopify order created`);
@@ -201,7 +225,7 @@ async function handlePaymentUpdate(eventType, data, eventTime, res) {
   });
 
   if (status === 'SUCCESS') {
-    if (shouldCreateShopifyOrder(eventType, paymentData)) {
+    if (isPaidInitialAuthorization(paymentData) || shouldCreateShopifyOrder(eventType, paymentData)) {
       if (await isPaymentOrderProcessed(eventId, subscriptionId)) {
         console.log(`[Webhook] Shopify order already processed for payment ${eventId}`);
         await markWebhookProcessed(eventType, eventId, subscriptionId, data);
@@ -244,6 +268,12 @@ async function createOrderForPayment(subscriptionId, paymentData, eventId) {
   const subscription = await getSubscriptionForOrder(subscriptionId, paymentData);
   if (!subscription) {
     return { success: false, error: 'No subscription data available for Shopify order' };
+  }
+
+  if (!subscription.shipping_address) {
+    console.error(
+      `[Webhook] No shipping_address in subscription row for ${subscriptionId} — order will be tagged MISSING-ADDRESS`
+    );
   }
 
   return createShopifyOrder({
@@ -299,6 +329,16 @@ function shouldCreateShopifyOrder(eventType, paymentData) {
     eventType === 'PAYMENT_STATUS_UPDATE' ||
     eventType === 'SUBSCRIPTION_PAYMENT_CONTROLLED_EXECUTION_STATUS'
   );
+}
+
+function isPaidInitialAuthorization(paymentData) {
+  const paymentType = String(paymentData.payment_type || '').toUpperCase();
+  const authStatus = String(paymentData.authorization_details?.authorization_status || '').toUpperCase();
+  const paymentStatus = String(paymentData.payment_status || '').toUpperCase();
+  const amount = Number(paymentData.payment_amount || paymentData.authorization_details?.authorization_amount || 0);
+
+  if (paymentType && paymentType !== 'AUTH') return false;
+  return amount > 1 && (authStatus === 'ACTIVE' || paymentStatus === 'SUCCESS');
 }
 
 function normalizePaymentStatus(eventType, paymentData) {

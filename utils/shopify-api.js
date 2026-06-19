@@ -220,6 +220,17 @@ async function createShopifyOrder(params) {
 
   // Add shipping + billing address
   const addr = params.shippingAddress || {};
+  const hasUsableAddress = !!(addr.address1 && (addr.city || addr.zip));
+
+  if (!hasUsableAddress) {
+    // Customer is already charged — still create the order but flag it for ops
+    console.error(
+      `[Shopify] Order created WITHOUT usable shipping address for ${params.customerEmail} / ${params.subscriptionId || params.transactionId} — needs manual follow-up`
+    );
+    const existingTags = orderPayload.order.tags ? orderPayload.order.tags.split(', ').filter(Boolean) : [];
+    orderPayload.order.tags = [...existingTags, 'MISSING-ADDRESS'].join(', ');
+  }
+
   if (addr.address1) {
     const fullAddress = {
       first_name: addr.firstName || firstName,
@@ -246,8 +257,15 @@ async function createShopifyOrder(params) {
     };
   }
 
-  // Add line item: prefer variant_id, fallback to custom line item
-  if (params.variantId && params.variantId !== '') {
+  // Add line items: prefer the captured subscription item list, fallback to legacy single item.
+  const orderItems = normalizeOrderItems(params.items);
+  if (orderItems.length > 0) {
+    orderPayload.order.line_items = orderItems.map((item) => ({
+      variant_id: parseInt(item.variantId, 10),
+      quantity: item.quantity,
+      price: item.price.toString(),
+    }));
+  } else if (params.variantId && params.variantId !== '') {
     orderPayload.order.line_items.push({
       variant_id: parseInt(params.variantId, 10),
       quantity: 1,
@@ -304,6 +322,90 @@ async function createShopifyOrder(params) {
       error: typeof errMsg === 'object' ? JSON.stringify(errMsg) : errMsg,
     };
   }
+}
+
+function normalizeOrderItems(items) {
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .map((item) => ({
+      variantId: String(item.variantId || item.vid || '').trim(),
+      quantity: Math.max(1, parseInt(item.quantity || item.qty || 1, 10)),
+      price: parseShopifyPrice(item.price),
+    }))
+    .filter((item) => /^\d+$/.test(item.variantId) && item.price && item.price > 0);
+}
+
+// ──────────────────────────────────────
+// Product Pricing
+// ──────────────────────────────────────
+
+/**
+ * Fetches the current Shopify price for a variant.
+ *
+ * @param {string|number} variantId - Shopify variant ID
+ * @returns {Promise<object>} - { success, price, compareAtPrice, variant, error }
+ */
+async function getVariantCurrentPrice(variantId) {
+  const id = String(variantId || '').trim();
+  if (!/^\d+$/.test(id)) {
+    return { success: false, error: 'Valid product variant ID is required' };
+  }
+
+  let accessToken;
+  try {
+    accessToken = await getAccessToken();
+  } catch (authError) {
+    console.error('[Shopify] Auth error in variant price lookup:', authError.message);
+    return { success: false, error: authError.message };
+  }
+
+  const config = getShopifyConfig();
+  const url = `https://${config.storeDomain}/admin/api/${config.apiVersion}/variants/${id}.json?fields=id,product_id,title,price,compare_at_price`;
+
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
+    });
+
+    const variant = response.data?.variant;
+    const price = parseShopifyPrice(variant?.price);
+    const compareAtPrice = parseShopifyPrice(variant?.compare_at_price);
+
+    if (!variant || !price || price < 1) {
+      return { success: false, error: 'Shopify variant has no valid current price' };
+    }
+
+    return {
+      success: true,
+      price,
+      compareAtPrice,
+      variant,
+    };
+  } catch (error) {
+    if (error.response?.status === 401 && cachedToken.accessToken) {
+      console.warn('[Shopify] Token rejected (401) in variant price lookup, retrying...');
+      cachedToken = { accessToken: null, expiresAt: 0, scopes: null };
+      return getVariantCurrentPrice(variantId);
+    }
+
+    console.error('[Shopify] Variant price lookup failed:', error.response?.data || error.message);
+    return {
+      success: false,
+      error: error.response?.data?.errors || error.message,
+    };
+  }
+}
+
+function parseShopifyPrice(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number.parseFloat(String(value));
+  if (!Number.isFinite(parsed)) return null;
+  return Math.round(parsed * 100) / 100;
 }
 
 // ──────────────────────────────────────
@@ -382,6 +484,7 @@ async function lookupCustomerAddress(phone) {
 
 module.exports = {
   createShopifyOrder,
+  getVariantCurrentPrice,
   lookupCustomerAddress,
   getShopifyConfig,
   getAccessToken,
