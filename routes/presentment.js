@@ -192,11 +192,11 @@ async function reconcileSubscription(subId) {
       };
     }
 
-    await incrementPaymentCount(subId);
     await updateSubscriptionStatus(subId, 'ACTIVE', {
       lastPaymentDate: new Date().toISOString().split('T')[0],
       nextScheduleDate: live.success ? live.data.next_schedule_date : null,
     });
+    await incrementPaymentCount(subId);
     await markWebhookProcessed('RECONCILE_PAYMENT_SUCCESS', paymentId, subId, payment);
     await markWebhookProcessed('SHOPIFY_ORDER_CREATED', paymentId, subId, {
       source_event_type: 'RECONCILE_PAYMENT_SUCCESS',

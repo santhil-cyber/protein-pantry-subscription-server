@@ -171,7 +171,6 @@ async function handleAuthStatus(eventType, data, eventTime, res) {
       return res.status(200).json({ received: true, status: paymentStatus, duplicateOrder: true });
     }
 
-    await incrementPaymentCount(subscriptionId);
     await updateSubscriptionStatus(subscriptionId, 'ACTIVE', {
       cfSubscriptionId,
       lastPaymentDate: new Date().toISOString().split('T')[0],
@@ -184,6 +183,7 @@ async function handleAuthStatus(eventType, data, eventTime, res) {
       return res.status(502).json({ received: false, error: 'Shopify order failed' });
     }
 
+    await incrementPaymentCount(subscriptionId);
     await markWebhookProcessed('SHOPIFY_ORDER_CREATED', eventId, subscriptionId, {
       source_event_type: eventType,
       order_id: result.orderId,
@@ -237,8 +237,6 @@ async function handlePaymentUpdate(eventType, data, eventTime, res) {
         return res.status(200).json({ received: true, status, duplicateOrder: true });
       }
 
-      await incrementPaymentCount(subscriptionId);
-
       await updateSubscriptionStatus(subscriptionId, 'ACTIVE', {
         lastPaymentDate: new Date().toISOString().split('T')[0],
         nextScheduleDate: paymentData.next_schedule_date || paymentData.payment_schedule_date || null,
@@ -249,6 +247,7 @@ async function handlePaymentUpdate(eventType, data, eventTime, res) {
         console.error(`[Webhook] Shopify order FAILED for ${subscriptionId}:`, result.error);
         return res.status(502).json({ received: false, error: 'Shopify order failed' });
       }
+      await incrementPaymentCount(subscriptionId);
       await markWebhookProcessed('SHOPIFY_ORDER_CREATED', eventId, subscriptionId, {
         source_event_type: eventType,
         order_id: result.orderId,

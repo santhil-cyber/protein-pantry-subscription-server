@@ -87,7 +87,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     environment: env,
     timestamp: new Date().toISOString(),
-    version: '2.6.5',
+    version: '2.6.6',
     gateway: 'cashfree',
     config: {
       shopify_token: shopifyToken ? `${shopifyToken.substring(0, 8)}...` : 'NOT SET',

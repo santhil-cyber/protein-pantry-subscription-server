@@ -167,7 +167,7 @@ async function createShopifyOrder(params) {
   // Split customer name into first/last
   const nameParts = (params.customerName || 'Subscriber').trim().split(' ');
   const firstName = nameParts[0] || 'Subscriber';
-  const lastName = nameParts.slice(1).join(' ') || '';
+  const lastName = nameParts.slice(1).join(' ') || 'Customer';
 
   const uniquePaymentTag = params.transactionId
     ? `cashfree-payment-${String(params.transactionId).replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 40)}`
