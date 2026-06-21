@@ -122,6 +122,86 @@ router.get('/history/:subId', async (req, res) => {
 router.get('/reconcile/:subId', reconcileHandler);
 router.post('/reconcile/:subId', reconcileHandler);
 
+/**
+ * GET/POST /api/payments/reconcile-all
+ * ────────────────────────────────────
+ * Safety net for missed webhooks. Walks every active subscription, asks Cashfree
+ * what it actually collected, and creates any Shopify order that's missing. The
+ * per-payment atomic claim means this NEVER duplicates an order a webhook already
+ * made. Designed to be hit by a daily external cron (cron-job.org / Render cron).
+ *
+ * Protected by RECONCILE_SECRET when that env var is set: pass it as
+ * `?secret=...` or the `x-reconcile-secret` header.
+ */
+let reconcileAllRunning = false;
+
+router.get('/reconcile-all', reconcileAllHandler);
+router.post('/reconcile-all', reconcileAllHandler);
+
+async function reconcileAllHandler(req, res) {
+  const secret = process.env.RECONCILE_SECRET || '';
+  if (secret) {
+    const provided = req.get('x-reconcile-secret') || req.query.secret || '';
+    if (provided !== secret) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+  } else {
+    console.warn('[Reconcile] RECONCILE_SECRET not set — reconcile-all endpoint is publicly callable');
+  }
+
+  // Prevent overlapping runs (a slow run + the next cron tick).
+  if (reconcileAllRunning) {
+    return res.status(409).json({ success: false, error: 'Reconcile already in progress' });
+  }
+  reconcileAllRunning = true;
+
+  const startedAt = new Date().toISOString();
+  let checked = 0;
+  let ordersCreated = 0;
+  let failed = 0;
+  const failures = [];
+
+  try {
+    const active = await getActiveSubscriptions();
+    for (const sub of active) {
+      const subId = sub.subscription_id;
+      if (!subId) continue;
+      checked += 1;
+      try {
+        const result = await reconcileSubscription(subId);
+        if (result.success) {
+          ordersCreated += (result.createdOrders ? result.createdOrders.length : 0);
+        } else {
+          failed += 1;
+          failures.push({ subId, error: result.error });
+          console.error(`[ALERT][RECONCILE-FAILED] ${subId}: ${result.error}`);
+        }
+      } catch (err) {
+        // One subscription's failure must not abort the whole batch.
+        failed += 1;
+        failures.push({ subId, error: err.message });
+        console.error(`[ALERT][RECONCILE-FAILED] ${subId}: ${err.message}`);
+      }
+    }
+
+    console.log(`[Reconcile] Batch done: checked=${checked} ordersCreated=${ordersCreated} failed=${failed}`);
+    return res.status(200).json({
+      success: true,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      checked,
+      ordersCreated,
+      failed,
+      failures,
+    });
+  } catch (error) {
+    console.error('[ALERT][RECONCILE-FAILED] Batch error:', error);
+    return res.status(500).json({ success: false, error: 'Reconcile batch failed', checked, ordersCreated, failed });
+  } finally {
+    reconcileAllRunning = false;
+  }
+}
+
 async function reconcileHandler(req, res) {
   try {
     const { subId } = req.params;
