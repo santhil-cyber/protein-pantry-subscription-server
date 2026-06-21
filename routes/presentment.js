@@ -19,10 +19,12 @@ const {
   updateSubscriptionStatus,
   incrementPaymentCount,
   isPaymentOrderProcessed,
+  claimOrderForCycle,
   markWebhookProcessed,
   getPaymentByReference,
   recordPayment,
 } = require('../db/database');
+const { getOrderCycleKey } = require('./webhook');
 
 /**
  * GET /api/payments/active
@@ -175,7 +177,11 @@ async function reconcileSubscription(subId) {
       continue;
     }
 
-    if (await isPaymentOrderProcessed(paymentId, subId)) {
+    // Use the SAME per-payment claim as the webhook paths so reconcile never
+    // creates an order a webhook already created (and vice versa).
+    const cycleKey = getOrderCycleKey(payment, subId);
+    const claimed = await claimOrderForCycle(cycleKey, subId);
+    if (!claimed) {
       skipped.push({ ...summary, reason: 'already_ordered' });
       continue;
     }
@@ -200,6 +206,7 @@ async function reconcileSubscription(subId) {
     await markWebhookProcessed('RECONCILE_PAYMENT_SUCCESS', paymentId, subId, payment);
     await markWebhookProcessed('SHOPIFY_ORDER_CREATED', paymentId, subId, {
       source_event_type: 'RECONCILE_PAYMENT_SUCCESS',
+      cycle_key: cycleKey,
       order_id: order.orderId,
       order_number: order.orderNumber,
     });

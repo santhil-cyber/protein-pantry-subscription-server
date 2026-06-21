@@ -339,13 +339,6 @@ async function markWebhookProcessed(eventType, eventId, subscriptionId, payload)
   `).run(...params);
 }
 
-// Atomically claim Shopify-order creation for one billing cycle. Cashfree fires
-// several webhook events (SUBSCRIPTION_PAYMENT_SUCCESS, PAYMENT_STATUS_UPDATE,
-// SUBSCRIPTION_PAYMENT_CONTROLLED_EXECUTION_STATUS) for the SAME debit, each with
-// a different event_id — which previously created duplicate orders. We dedupe on
-// a stable per-cycle key using the unique index on
-// (event_type, event_id, subscription_id). Returns true only for the FIRST caller;
-// concurrent/duplicate events get false and must skip order creation.
 async function claimOrderForCycle(cycleKey, subscriptionId) {
   const params = ['SHOPIFY_ORDER_CLAIM', cycleKey || '', subscriptionId || '', '{}'];
 

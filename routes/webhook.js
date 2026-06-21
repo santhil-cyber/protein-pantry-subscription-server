@@ -166,8 +166,10 @@ async function handleAuthStatus(eventType, data, eventTime, res) {
   });
 
   if (isPaidInitialAuthorization(paymentData)) {
-    if (await isPaymentOrderProcessed(eventId, subscriptionId)) {
-      console.log(`[Webhook] Initial paid authorization order already processed for ${eventId}`);
+    const cycleKey = getOrderCycleKey(paymentData, subscriptionId);
+    const claimed = await claimOrderForCycle(cycleKey, subscriptionId);
+    if (!claimed) {
+      console.log(`[Webhook] Initial order already claimed for cycle ${cycleKey} — skipping duplicate`);
       await markWebhookProcessed(eventType, eventId, subscriptionId, data);
       return res.status(200).json({ received: true, status: paymentStatus, duplicateOrder: true });
     }
@@ -187,11 +189,12 @@ async function handleAuthStatus(eventType, data, eventTime, res) {
     await incrementPaymentCount(subscriptionId);
     await markWebhookProcessed('SHOPIFY_ORDER_CREATED', eventId, subscriptionId, {
       source_event_type: eventType,
+      cycle_key: cycleKey,
       order_id: result.orderId,
       order_number: result.orderNumber,
     });
     await markWebhookProcessed(eventType, eventId, subscriptionId, data);
-    console.log(`[Webhook] Initial Shopify order created: #${result.orderNumber} for ${subscriptionId}`);
+    console.log(`[Webhook] Initial Shopify order created: #${result.orderNumber} for ${subscriptionId} (cycle ${cycleKey})`);
     return res.status(200).json({ received: true, status: paymentStatus, orderCreated: true });
   }
 
@@ -402,17 +405,19 @@ function getPaymentEventId(eventType, paymentData, subscriptionId, eventTime) {
 }
 
 // A key that is STABLE across the multiple event types Cashfree sends for the
-// same debit, so we create exactly one Shopify order per billing cycle. The
-// schedule date identifies the cycle; cf_payment_id (shared by all events for a
-// single payment) is preferred when present. Crucially this does NOT include
-// eventType, which is what caused duplicate orders before.
+// same debit AND across the reconcile path, so we create exactly one Shopify
+// order per actual payment. cf_payment_id identifies one money movement and is
+// shared by every event/reconcile record for that payment — so it's the primary
+// key. Schedule date is the fallback for the rare event with no cf_payment_id.
+// This deliberately excludes eventType (which differs per event and caused the
+// duplicate orders).
 function getOrderCycleKey(paymentData, subscriptionId) {
+  if (paymentData.cf_payment_id) return `${subscriptionId}-pay-${paymentData.cf_payment_id}`;
   const schedule =
     paymentData.payment_schedule_date ||
     paymentData.next_schedule_date ||
     null;
   if (schedule) return `${subscriptionId}-cycle-${schedule}`;
-  if (paymentData.cf_payment_id) return `${subscriptionId}-pay-${paymentData.cf_payment_id}`;
   return `${subscriptionId}-cycle-INITIAL`;
 }
 
@@ -497,3 +502,4 @@ function isCashfreeDashboardTest(body) {
 }
 
 module.exports = router;
+module.exports.getOrderCycleKey = getOrderCycleKey;
