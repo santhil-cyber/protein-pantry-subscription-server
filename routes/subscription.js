@@ -154,6 +154,15 @@ router.post('/create', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Valid 10-digit Indian phone number is required' });
     }
 
+    // ── Shipping address (authoritative guard) ──
+    // The storefront form validates this too, but the server must enforce it so a
+    // subscription can never be created without a fulfillable address — that's what
+    // previously produced MISSING-ADDRESS-tagged orders we couldn't ship.
+    const addrErr = validateShippingAddress(shippingAddress);
+    if (addrErr) {
+      return res.status(400).json({ success: false, error: addrErr });
+    }
+
     const validFrequencies = ['1_day', '2_day', '1_week', '2_week', '3_week', 'monthly'];
     if (!frequency || !validFrequencies.includes(frequency)) {
       return res.status(400).json({
@@ -406,6 +415,24 @@ router.post('/resume/:subId', async (req, res) => {
     return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
+
+// Validates the shipping address so an unfulfillable subscription can never be
+// created. Returns an error string, or null when the address is acceptable.
+function validateShippingAddress(addr) {
+  if (!addr || typeof addr !== 'object') {
+    return 'Delivery address is required';
+  }
+  const address1 = String(addr.address1 || '').trim();
+  const city = String(addr.city || '').trim();
+  const province = String(addr.province || addr.state || '').trim();
+  const zip = String(addr.zip || addr.pincode || '').trim();
+
+  if (address1.length < 4) return 'A complete street address is required';
+  if (!city) return 'City is required in the delivery address';
+  if (!province) return 'State is required in the delivery address';
+  if (!/^\d{6}$/.test(zip)) return 'A valid 6-digit pincode is required';
+  return null;
+}
 
 function getFirstChargeTimeOverride(firstChargeDelayHours) {
   if (firstChargeDelayHours === undefined || firstChargeDelayHours === null || firstChargeDelayHours === '') {

@@ -182,7 +182,7 @@ async function handleAuthStatus(eventType, data, eventTime, res) {
 
     const result = await createOrderForPayment(subscriptionId, paymentData, eventId);
     if (!result.success) {
-      console.error(`[Webhook] Initial Shopify order FAILED for ${subscriptionId}:`, result.error);
+      console.error(`[ALERT][ORDER-FAILED] Initial Shopify order failed for ${subscriptionId}: ${result.error}`);
       return res.status(502).json({ received: false, error: 'Shopify order failed' });
     }
 
@@ -252,7 +252,7 @@ async function handlePaymentUpdate(eventType, data, eventTime, res) {
 
       const result = await createOrderForPayment(subscriptionId, paymentData, eventId);
       if (!result.success) {
-        console.error(`[Webhook] Shopify order FAILED for ${subscriptionId}:`, result.error);
+        console.error(`[ALERT][ORDER-FAILED] Recurring Shopify order failed for ${subscriptionId}: ${result.error}`);
         return res.status(502).json({ received: false, error: 'Shopify order failed' });
       }
       await incrementPaymentCount(subscriptionId);
@@ -270,9 +270,9 @@ async function handlePaymentUpdate(eventType, data, eventTime, res) {
       console.log(`[Webhook] Payment SUCCESS for ${subscriptionId}, but it is an authorization event; order skipped`);
     }
   } else if (status === 'FAILED') {
-    console.warn(`[Webhook] Payment FAILED for ${subscriptionId}: ${getFailureReason(paymentData) || 'Unknown'}`);
+    console.error(`[ALERT][PAYMENT-FAILED] Debit failed for ${subscriptionId}: ${getFailureReason(paymentData) || 'Unknown'}`);
   } else if (status === 'CANCELLED') {
-    console.warn(`[Webhook] Payment CANCELLED for ${subscriptionId}`);
+    console.warn(`[ALERT][PAYMENT-CANCELLED] Debit cancelled for ${subscriptionId}`);
   } else {
     console.log(`[Webhook] Payment ${status || 'updated'} for ${subscriptionId}`);
   }

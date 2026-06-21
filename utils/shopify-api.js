@@ -223,9 +223,10 @@ async function createShopifyOrder(params) {
   const hasUsableAddress = !!(addr.address1 && (addr.city || addr.zip));
 
   if (!hasUsableAddress) {
-    // Customer is already charged — still create the order but flag it for ops
+    // Customer is already charged — still create the order but flag it for ops.
+    // [ALERT] prefix is the single greppable marker for log-based monitoring.
     console.error(
-      `[Shopify] Order created WITHOUT usable shipping address for ${params.customerEmail} / ${params.subscriptionId || params.transactionId} — needs manual follow-up`
+      `[ALERT][MISSING-ADDRESS] Order created without usable shipping address for ${params.customerEmail} / ${params.subscriptionId || params.transactionId} — needs manual follow-up`
     );
     const existingTags = orderPayload.order.tags ? orderPayload.order.tags.split(', ').filter(Boolean) : [];
     orderPayload.order.tags = [...existingTags, 'MISSING-ADDRESS'].join(', ');
