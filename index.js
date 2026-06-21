@@ -50,20 +50,21 @@ const allowedOrigins = [
   process.env.SHOPIFY_STORE_DOMAIN ? `https://${process.env.SHOPIFY_STORE_DOMAIN}` : '',
 ].filter(Boolean);
 
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (e.g., Postman, server-to-server, webhooks)
-    if (!origin) return callback(null, true);
-    // Customer-account UI extensions run in a Web Worker whose requests carry the
-    // literal Origin string "null". Allow it so the Subscriptions page can call us.
-    if (origin === 'null') return callback(null, true);
-    if (allowedOrigins.some(allowed => origin.startsWith(allowed))) {
-      return callback(null, true);
-    }
-    console.warn(`[CORS] Blocked request from origin: ${origin}`);
-    return callback(new Error('Not allowed by CORS'), false);
-  },
-  credentials: true,
+// The customer-account UI extension fetches with `credentials: 'omit'` from a
+// null origin. A browser rejects `Access-Control-Allow-Origin: null` combined
+// with `Access-Control-Allow-Credentials: true` (fetch throws "Failed to fetch").
+// So for the null/no-origin case we reply with ACAO:* and NO credentials header;
+// for real storefront origins we keep the credentialed, origin-reflected behavior.
+app.use(cors((req, callback) => {
+  const origin = req.header('Origin');
+  if (!origin || origin === 'null') {
+    return callback(null, { origin: '*', credentials: false });
+  }
+  if (allowedOrigins.some(allowed => origin.startsWith(allowed))) {
+    return callback(null, { origin: true, credentials: true });
+  }
+  console.warn(`[CORS] Blocked request from origin: ${origin}`);
+  return callback(null, { origin: false });
 }));
 
 // ── Body Parsing ──
