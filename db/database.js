@@ -339,7 +339,15 @@ async function markWebhookProcessed(eventType, eventId, subscriptionId, payload)
   `).run(...params);
 }
 
-async function claimOrderForCycle(cycleKey, subscriptionId) {
+async function claimOrderForCycle(cycleKey, subscriptionId, legacyEventId) {
+  // Back-compat: orders created before the claim system was introduced were
+  // recorded only as SHOPIFY_ORDER_CREATED with event_id = the raw cf_payment_id.
+  // Honour those so reconcile never re-creates a pre-existing order.
+  if (legacyEventId) {
+    const already = await isPaymentOrderProcessed(legacyEventId, subscriptionId);
+    if (already) return false;
+  }
+
   const params = ['SHOPIFY_ORDER_CLAIM', cycleKey || '', subscriptionId || '', '{}'];
 
   if (dbMode === 'postgres') {

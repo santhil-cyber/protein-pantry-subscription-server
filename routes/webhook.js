@@ -167,7 +167,7 @@ async function handleAuthStatus(eventType, data, eventTime, res) {
 
   if (isPaidInitialAuthorization(paymentData)) {
     const cycleKey = getOrderCycleKey(paymentData, subscriptionId);
-    const claimed = await claimOrderForCycle(cycleKey, subscriptionId);
+    const claimed = await claimOrderForCycle(cycleKey, subscriptionId, paymentData.cf_payment_id);
     if (!claimed) {
       console.log(`[Webhook] Initial order already claimed for cycle ${cycleKey} — skipping duplicate`);
       await markWebhookProcessed(eventType, eventId, subscriptionId, data);
@@ -238,7 +238,7 @@ async function handlePaymentUpdate(eventType, data, eventTime, res) {
       // Dedupe per billing cycle, not per event. Cashfree sends several event
       // types for one debit; only the first to claim the cycle creates an order.
       const cycleKey = getOrderCycleKey(paymentData, subscriptionId);
-      const claimed = await claimOrderForCycle(cycleKey, subscriptionId);
+      const claimed = await claimOrderForCycle(cycleKey, subscriptionId, paymentData.cf_payment_id);
       if (!claimed) {
         console.log(`[Webhook] Order already claimed for cycle ${cycleKey} — skipping duplicate`);
         await markWebhookProcessed(eventType, eventId, subscriptionId, data);

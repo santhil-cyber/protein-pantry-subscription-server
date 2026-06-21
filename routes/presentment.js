@@ -260,7 +260,7 @@ async function reconcileSubscription(subId) {
     // Use the SAME per-payment claim as the webhook paths so reconcile never
     // creates an order a webhook already created (and vice versa).
     const cycleKey = getOrderCycleKey(payment, subId);
-    const claimed = await claimOrderForCycle(cycleKey, subId);
+    const claimed = await claimOrderForCycle(cycleKey, subId, payment.cf_payment_id);
     if (!claimed) {
       skipped.push({ ...summary, reason: 'already_ordered' });
       continue;
