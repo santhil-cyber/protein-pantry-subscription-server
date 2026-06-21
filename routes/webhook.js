@@ -17,6 +17,7 @@ const {
   isWebhookProcessed,
   markWebhookProcessed,
   isPaymentOrderProcessed,
+  claimOrderForCycle,
   getPaymentByReference,
   recordPayment,
   getSubscriptionById,
@@ -231,8 +232,12 @@ async function handlePaymentUpdate(eventType, data, eventTime, res) {
 
   if (status === 'SUCCESS') {
     if (isPaidInitialAuthorization(paymentData) || shouldCreateShopifyOrder(eventType, paymentData)) {
-      if (await isPaymentOrderProcessed(eventId, subscriptionId)) {
-        console.log(`[Webhook] Shopify order already processed for payment ${eventId}`);
+      // Dedupe per billing cycle, not per event. Cashfree sends several event
+      // types for one debit; only the first to claim the cycle creates an order.
+      const cycleKey = getOrderCycleKey(paymentData, subscriptionId);
+      const claimed = await claimOrderForCycle(cycleKey, subscriptionId);
+      if (!claimed) {
+        console.log(`[Webhook] Order already claimed for cycle ${cycleKey} — skipping duplicate`);
         await markWebhookProcessed(eventType, eventId, subscriptionId, data);
         return res.status(200).json({ received: true, status, duplicateOrder: true });
       }
@@ -250,10 +255,11 @@ async function handlePaymentUpdate(eventType, data, eventTime, res) {
       await incrementPaymentCount(subscriptionId);
       await markWebhookProcessed('SHOPIFY_ORDER_CREATED', eventId, subscriptionId, {
         source_event_type: eventType,
+        cycle_key: cycleKey,
         order_id: result.orderId,
         order_number: result.orderNumber,
       });
-      console.log(`[Webhook] Shopify order created: #${result.orderNumber} for ${subscriptionId}`);
+      console.log(`[Webhook] Shopify order created: #${result.orderNumber} for ${subscriptionId} (cycle ${cycleKey})`);
     } else {
       await updateSubscriptionStatus(subscriptionId, 'ACTIVE', {
         nextScheduleDate: paymentData.next_schedule_date || paymentData.payment_schedule_date || null,
@@ -393,6 +399,21 @@ function getPaymentEventId(eventType, paymentData, subscriptionId, eventTime) {
     paymentData.payment_id ||
     `${subscriptionId}-${eventType}-${paymentData.payment_schedule_date || eventTime || 'unknown'}`
   );
+}
+
+// A key that is STABLE across the multiple event types Cashfree sends for the
+// same debit, so we create exactly one Shopify order per billing cycle. The
+// schedule date identifies the cycle; cf_payment_id (shared by all events for a
+// single payment) is preferred when present. Crucially this does NOT include
+// eventType, which is what caused duplicate orders before.
+function getOrderCycleKey(paymentData, subscriptionId) {
+  const schedule =
+    paymentData.payment_schedule_date ||
+    paymentData.next_schedule_date ||
+    null;
+  if (schedule) return `${subscriptionId}-cycle-${schedule}`;
+  if (paymentData.cf_payment_id) return `${subscriptionId}-pay-${paymentData.cf_payment_id}`;
+  return `${subscriptionId}-cycle-INITIAL`;
 }
 
 function getPaymentMethod(paymentData) {
