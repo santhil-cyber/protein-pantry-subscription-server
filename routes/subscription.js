@@ -353,6 +353,60 @@ router.post('/cancel/:subId', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/subscription/pause/:subId
+ * ───────────────────────────────────
+ * Pauses an ACTIVE subscription via Cashfree. Recurring debits stop until resumed.
+ */
+router.post('/pause/:subId', async (req, res) => {
+  try {
+    const { subId } = req.params;
+    const subscription = await getSubscriptionById(subId);
+    if (!subscription) return res.status(404).json({ success: false, error: 'Subscription not found' });
+
+    if (subscription.status !== 'ACTIVE') {
+      return res.status(400).json({ success: false, error: `Only ACTIVE subscriptions can be paused (current: ${subscription.status})` });
+    }
+
+    const result = await manageSubscription(subId, 'PAUSE');
+    if (result.success) {
+      await updateSubscriptionStatus(subId, 'PAUSED');
+      return res.status(200).json({ success: true, message: 'Subscription paused' });
+    }
+    return res.status(502).json({ success: false, error: 'Could not pause subscription. Please try again.' });
+  } catch (error) {
+    console.error('[Subscription] Pause error:', error);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+/**
+ * POST /api/subscription/resume/:subId
+ * ────────────────────────────────────
+ * Resumes a PAUSED subscription via Cashfree. Recurring debits continue.
+ */
+router.post('/resume/:subId', async (req, res) => {
+  try {
+    const { subId } = req.params;
+    const subscription = await getSubscriptionById(subId);
+    if (!subscription) return res.status(404).json({ success: false, error: 'Subscription not found' });
+
+    if (subscription.status !== 'PAUSED') {
+      return res.status(400).json({ success: false, error: `Only PAUSED subscriptions can be resumed (current: ${subscription.status})` });
+    }
+
+    const result = await manageSubscription(subId, 'RESUME');
+    if (result.success) {
+      await updateSubscriptionStatus(subId, 'ACTIVE');
+      return res.status(200).json({ success: true, message: 'Subscription resumed' });
+    }
+    return res.status(502).json({ success: false, error: 'Could not resume subscription. Please try again.' });
+  } catch (error) {
+    console.error('[Subscription] Resume error:', error);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 function getFirstChargeTimeOverride(firstChargeDelayHours) {
   if (firstChargeDelayHours === undefined || firstChargeDelayHours === null || firstChargeDelayHours === '') {
     return null;

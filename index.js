@@ -38,6 +38,9 @@ const allowedOrigins = [
   'https://proteinpantry.in',
   'https://www.proteinpantry.in',
   'https://0nb9nh-8p.myshopify.com',
+  // Customer-account UI extension runs on Shopify-hosted account origins.
+  'https://shopify.com',
+  'https://account.shopify.com',
   process.env.SHOPIFY_STORE_DOMAIN ? `https://${process.env.SHOPIFY_STORE_DOMAIN}` : '',
 ].filter(Boolean);
 
@@ -45,6 +48,9 @@ app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (e.g., Postman, server-to-server, webhooks)
     if (!origin) return callback(null, true);
+    // Customer-account UI extensions run in a Web Worker whose requests carry the
+    // literal Origin string "null". Allow it so the Subscriptions page can call us.
+    if (origin === 'null') return callback(null, true);
     if (allowedOrigins.some(allowed => origin.startsWith(allowed))) {
       return callback(null, true);
     }
