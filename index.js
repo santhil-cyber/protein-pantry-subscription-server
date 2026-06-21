@@ -27,7 +27,13 @@ const app = express();
 const PORT = process.env.SERVER_PORT || 3000;
 
 // ── Security Middleware ──
-app.use(helmet());
+// Default helmet sets Cross-Origin-Resource-Policy: same-origin, which blocks
+// the customer-account UI extension (a null-origin Web Worker) from reading our
+// API responses — fetch fails with "Failed to fetch". Relax CORP to cross-origin
+// so cross-origin callers can read responses (access is still gated by CORS above).
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 
 // ── CORS ──
 // Allow requests from the Shopify storefront and local development
