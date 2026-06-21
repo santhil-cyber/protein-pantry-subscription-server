@@ -50,14 +50,17 @@ const allowedOrigins = [
   process.env.SHOPIFY_STORE_DOMAIN ? `https://${process.env.SHOPIFY_STORE_DOMAIN}` : '',
 ].filter(Boolean);
 
-// The customer-account UI extension fetches with `credentials: 'omit'` from a
-// null origin. A browser rejects `Access-Control-Allow-Origin: null` combined
-// with `Access-Control-Allow-Credentials: true` (fetch throws "Failed to fetch").
-// So for the null/no-origin case we reply with ACAO:* and NO credentials header;
-// for real storefront origins we keep the credentialed, origin-reflected behavior.
+// The customer-account UI extension runs in a sandboxed Web Worker. Depending on
+// the API version its requests carry either `Origin: null` or the Shopify-hosted
+// origin `https://extensions.shopifycdn.com`, and it fetches with
+// `credentials: 'omit'`. Per Shopify's docs the server must reply with
+// `Access-Control-Allow-Origin: *` and NO credentials header for these. Real
+// storefront origins keep the credentialed, origin-reflected behavior.
+const EXTENSION_ORIGINS = ['null', 'https://extensions.shopifycdn.com'];
+
 app.use(cors((req, callback) => {
   const origin = req.header('Origin');
-  if (!origin || origin === 'null') {
+  if (!origin || EXTENSION_ORIGINS.includes(origin)) {
     return callback(null, { origin: '*', credentials: false });
   }
   if (allowedOrigins.some(allowed => origin.startsWith(allowed))) {
